@@ -1,0 +1,33 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Generated images and local history
+public/generated/
+data/
+
+# Bundled runtime and packaged app
+runtime/
+*.app/
+
+# Runtime logs and process files
+运行日志/
+*.log
+*.pid
+
+# Environment variables and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

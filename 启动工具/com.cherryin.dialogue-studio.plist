@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cherryin.dialogue-studio</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/xieyingjun/.hermes/node/bin/node</string>
+    <string>/Users/xieyingjun/Documents/画室/node_modules/next/dist/bin/next</string>
+    <string>start</string>
+    <string>/Users/xieyingjun/Documents/画室</string>
+    <string>-p</string>
+    <string>3100</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/xieyingjun/Documents/画室</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CHERRYIN_STUDIO_ROOT</key>
+    <string>/Users/xieyingjun/Documents/画室</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/xieyingjun/Library/Logs/CherryIN/画室.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/xieyingjun/Library/Logs/CherryIN/画室错误.log</string>
+</dict>
+</plist>
