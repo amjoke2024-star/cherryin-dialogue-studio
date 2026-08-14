@@ -37,6 +37,21 @@ export function hasPendingReplacement(regions: TextRegion[]): boolean {
   });
 }
 
+export function textEditGuideRegions(regions: TextRegion[]) {
+  return regions
+    .filter((region) => {
+      const replacement = region.replacement.trim();
+      return Boolean(replacement) && replacement !== region.text.trim();
+    })
+    .map((region, index) => ({ number: index + 1, region }));
+}
+
+export function persistentTextEditReferences<T extends { transient?: boolean }>(
+  references: T[],
+): T[] {
+  return references.filter((item) => !item.transient);
+}
+
 export function shouldCollapseTextEditWorkspace(
   isTextEdit: boolean,
   isRepeat: boolean,
@@ -56,24 +71,36 @@ function locationName(box: NormalizedBox) {
   ][row][column];
 }
 
-export function buildTextEditPrompt(regions: TextRegion[]): string {
-  const edits = regions.filter((region) => {
-    const replacement = region.replacement.trim();
-    return Boolean(replacement) && replacement !== region.text.trim();
-  });
+export function buildTextEditPrompt(
+  regions: TextRegion[],
+  options: { hasGuide?: boolean } = {},
+): string {
+  const edits = textEditGuideRegions(regions);
 
-  const instructions = edits.map((region, index) => {
+  const instructions = edits.map(({ number, region }) => {
     const original = region.text.trim();
     const replacement = region.replacement.trim();
     const action = original
       ? `将“${original}”替换为“${replacement}”`
       : `将所选文字替换为“${replacement}”`;
-    return `${index + 1}. 在图片${locationName(region.box)}，${action}。`;
+    const target = options.hasGuide
+      ? `第2张定位图的标记框 ${number}（图片${locationName(region.box)}）`
+      : `图片${locationName(region.box)}`;
+    return `${number}. 在${target}，${action}。`;
   });
 
   return [
+    ...(options.hasGuide
+      ? [
+          "第1张图是唯一的干净原图和最终编辑底图；第2张图是带编号框的定位图，只用于指出修改位置。",
+          "必须以第1张图为基础，只修改第2张定位图中明确标出的区域。",
+        ]
+      : []),
     "请只修改以下指定文字：",
     ...instructions,
     "保持原有字体观感、颜色、大小、排版、间距、阴影、透视和背景纹理自然一致，其他内容保持不变。",
+    ...(options.hasGuide
+      ? ["定位图中的边框、编号和标记颜色不得出现在结果中。"]
+      : []),
   ].join("\n");
 }

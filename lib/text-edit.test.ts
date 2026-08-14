@@ -4,7 +4,9 @@ import {
   buildTextEditPrompt,
   hasPendingReplacement,
   normalizeRegion,
+  persistentTextEditReferences,
   shouldCollapseTextEditWorkspace,
+  textEditGuideRegions,
   type TextRegion,
 } from "./text-edit.ts";
 
@@ -72,4 +74,33 @@ test("only a new text edit submission collapses the workspace", () => {
   assert.equal(shouldCollapseTextEditWorkspace(true, false), true);
   assert.equal(shouldCollapseTextEditWorkspace(true, true), false);
   assert.equal(shouldCollapseTextEditWorkspace(false, false), false);
+});
+
+test("text edit guide numbers only changed regions in stable order", () => {
+  const regions: TextRegion[] = [
+    { id: "keep", text: "不变", replacement: "不变", box: { x: 0, y: 0, width: 0.1, height: 0.1 }, source: "ocr" },
+    { id: "headline", text: "新品预售", replacement: "我是大侠", box: { x: 0.2, y: 0.2, width: 0.5, height: 0.15 }, source: "ocr" },
+    { id: "empty", text: "说明", replacement: " ", box: { x: 0, y: 0.5, width: 0.2, height: 0.1 }, source: "ocr" },
+    { id: "manual", text: "", replacement: "今日上新", box: { x: 0.1, y: 0.7, width: 0.3, height: 0.1 }, source: "manual" },
+  ];
+
+  assert.deepEqual(textEditGuideRegions(regions).map(({ number, region }) => [number, region.id]), [
+    [1, "headline"],
+    [2, "manual"],
+  ]);
+
+  const prompt = buildTextEditPrompt(regions, { hasGuide: true });
+  assert.match(prompt, /第2张图是带编号框的定位图/);
+  assert.match(prompt, /标记框 1/);
+  assert.match(prompt, /标记框 2/);
+  assert.match(prompt, /定位图中的边框、编号和标记颜色不得出现在结果中/);
+});
+
+test("temporary location guides are excluded from persisted references", () => {
+  const references = [
+    { name: "原图.png", data: "original" },
+    { name: "文字定位图.png", data: "guide", transient: true },
+  ];
+
+  assert.deepEqual(persistentTextEditReferences(references), [references[0]]);
 });

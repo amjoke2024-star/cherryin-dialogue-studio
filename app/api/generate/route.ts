@@ -3,8 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { studioPath } from "../../../lib/studio-paths";
+import { persistentTextEditReferences } from "../../../lib/text-edit";
 
-type Reference = { name: string; data: string };
+type Reference = { name: string; data: string; transient?: boolean };
 const timeout = 600_000;
 const geminiTimeout = 600_000;
 const bflTimeout = 600_000;
@@ -36,19 +37,19 @@ export async function POST(request: NextRequest) {
     const providerSize = normalizeGptImage2Size(model, size);
     if (model.startsWith("bfl/")) {
       const batches = await Promise.all(Array.from({ length: count }, () => requestBfl(apiKey.trim(), model.slice(4), prompt, size, references)));
-      const archivedReferences = archiveReferences ? await Promise.all(references.map(saveReference)) : undefined;
+      const archivedReferences = archiveReferences ? await archivePersistentReferences(references) : undefined;
       return NextResponse.json({ images: batches, references: archivedReferences });
     }
     if (apiSource === "cherryin" && isGeminiImageModel(model)) {
       const batches = await Promise.all(Array.from({ length: count }, () => requestGemini(apiKey.trim(), model, prompt, size, references)));
-      const archivedReferences = archiveReferences ? await Promise.all(references.map(saveReference)) : undefined;
+      const archivedReferences = archiveReferences ? await archivePersistentReferences(references) : undefined;
       return NextResponse.json({ images: batches.flat(), references: archivedReferences });
     }
     if (references.length) {
       // Several CherryIN edit models ignore n and always return one image.
       // Run one edit request per requested result so the selected count is reliable.
       const batches = await Promise.all(Array.from({ length: count }, () => requestEdit(apiKey.trim(), apiSource, model, prompt, providerSize, quality, references)));
-      const archivedReferences = archiveReferences ? await Promise.all(references.map(saveReference)) : undefined;
+      const archivedReferences = archiveReferences ? await archivePersistentReferences(references) : undefined;
       return NextResponse.json({ images: batches.flat(), references: archivedReferences });
     }
     // Apilio can finish the upstream generation but fail while proxying a large
@@ -238,6 +239,12 @@ async function saveReference(item: Reference): Promise<Reference> {
   const match = item.data.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) return item;
   return { name: item.name, data: await saveGeneratedImage(Buffer.from(match[2], "base64"), match[1]) };
+}
+
+async function archivePersistentReferences(references: Reference[]) {
+  return Promise.all(
+    persistentTextEditReferences(references).map(saveReference),
+  );
 }
 
 async function normalize(value: unknown) {

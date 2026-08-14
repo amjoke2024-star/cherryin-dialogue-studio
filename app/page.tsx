@@ -12,15 +12,17 @@ import {
 import "./model-grid.css";
 import TextEditWorkspace from "./components/TextEditWorkspace";
 import { recognizeImageText, terminateOcr } from "../lib/browser-ocr";
+import { createTextEditGuideImage } from "../lib/text-edit-guide";
 import { decideJobTermination, type StudioMode } from "../lib/job-lifecycle";
 import {
   buildTextEditPrompt,
   hasPendingReplacement,
+  persistentTextEditReferences,
   shouldCollapseTextEditWorkspace,
   type TextRegion,
 } from "../lib/text-edit";
 
-type Attachment = { name: string; data: string };
+type Attachment = { name: string; data: string; transient?: boolean };
 type TextEditState = { sourceImage: Attachment; regions: TextRegion[] };
 type Turn = {
   id: string;
@@ -987,12 +989,24 @@ export default function Home() {
       setError("请至少填写一处要替换的新文字");
       return;
     }
-    const runPrompt = isTextEdit
-      ? buildTextEditPrompt(textEditState?.regions || [])
-      : repeat?.prompt || prompt.trim();
-    const runAttachments = isTextEdit
-      ? [textEditState!.sourceImage]
-      : repeat?.attachments || attachments;
+    let runPrompt = repeat?.prompt || prompt.trim();
+    let runAttachments = repeat?.attachments || attachments;
+    if (isTextEdit) {
+      try {
+        const guideImage = await createTextEditGuideImage(
+          textEditState!.sourceImage.data,
+          textEditState!.regions,
+        );
+        runPrompt = buildTextEditPrompt(textEditState!.regions, { hasGuide: true });
+        runAttachments = [
+          textEditState!.sourceImage,
+          { name: "文字定位图.png", data: guideImage, transient: true },
+        ];
+      } catch (guideError) {
+        setError(guideError instanceof Error ? guideError.message : "文字定位图生成失败，请重新上传图片");
+        return;
+      }
+    }
     const requestedModel = repeat?.modelId || model;
     const runModel = isTextEdit && !isGptImage2(requestedModel)
       ? initialDefaultModels[apiSource === "bfl" ? "cherryin" : apiSource]
@@ -1135,7 +1149,7 @@ export default function Home() {
         size: job.size,
         resolution: job.resolution,
         count: completedCount,
-        attachments: data.references || job.attachments,
+        attachments: data.references || persistentTextEditReferences(job.attachments || []),
         mode: job.mode,
         textEdit: job.textEdit ? {
           ...job.textEdit,
@@ -1170,7 +1184,7 @@ export default function Home() {
         size: job.size,
         resolution: job.resolution,
         count: job.count || 1,
-        attachments: job.attachments,
+        attachments: persistentTextEditReferences(job.attachments || []),
         mode: job.mode,
         textEdit: job.textEdit,
         status: termination.recordCancelled ? "cancelled" : "failed",
@@ -2164,7 +2178,7 @@ function GenerationHeader({
   > & { createdAt?: number };
   onReferenceClick?: (references: Attachment[]) => void;
 }) {
-  const references = turn.attachments || [];
+  const references = persistentTextEditReferences(turn.attachments || []);
   const source = turn.apiSource || sourceForModel(turn.modelId);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsRef = useRef<HTMLSpanElement>(null);
