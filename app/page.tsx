@@ -16,6 +16,7 @@ import { decideJobTermination, type StudioMode } from "../lib/job-lifecycle";
 import {
   buildTextEditPrompt,
   hasPendingReplacement,
+  shouldCollapseTextEditWorkspace,
   type TextRegion,
 } from "../lib/text-edit";
 
@@ -308,6 +309,7 @@ export default function Home() {
   const [activeTextRegion, setActiveTextRegion] = useState<string | null>(null);
   const [recognizingText, setRecognizingText] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
+  const [textEditWorkspaceExpanded, setTextEditWorkspaceExpanded] = useState(true);
   const [modelOptions, setModelOptions] = useState(fallbackModels);
   const [model, setModel] = useState(fallbackModels[0].id);
   const [expandedModelVendors, setExpandedModelVendors] = useState<
@@ -803,6 +805,7 @@ export default function Home() {
     ocrRequestRef.current += 1;
     setRecognizingText(false);
     setOcrProgress(0);
+    setTextEditWorkspaceExpanded(true);
     setError("");
     setPanel(null);
   }
@@ -814,6 +817,7 @@ export default function Home() {
     setActiveTextRegion(null);
     setRecognizingText(false);
     setOcrProgress(0);
+    setTextEditWorkspaceExpanded(true);
     setError("");
     if (fileInput.current) fileInput.current.value = "";
   }
@@ -839,6 +843,7 @@ export default function Home() {
     const image = { name: file.name, data: await readFile(file) };
     if (ocrRequestRef.current !== requestId) return;
     setTextEditImage(image);
+    setTextEditWorkspaceExpanded(true);
     setTextRegions([]);
     setActiveTextRegion(null);
     setRecognizingText(true);
@@ -1065,6 +1070,9 @@ export default function Home() {
     };
     setError("");
     setPanel(null);
+    if (shouldCollapseTextEditWorkspace(isTextEdit, Boolean(repeat))) {
+      setTextEditWorkspaceExpanded(false);
+    }
     if (!repeat) {
       if (studioMode === "generate") {
         setPrompt("");
@@ -1274,8 +1282,17 @@ export default function Home() {
           />
         ) : (
           <div className="text-edit-intro">
-            <strong>{textEditImage ? "选择图片中的文字" : "上传一张需要改字的图片"}</strong>
-            <span>{textEditImage ? "识别在本机完成。点击文字框后，只需填写改成什么。" : "程序会在本机识别文字，不消耗 Image 2 额度。"}</span>
+            <strong>{textEditImage ? textEditWorkspaceExpanded ? "选择图片中的文字" : "图片改字任务已提交" : "上传一张需要改字的图片"}</strong>
+            <span>{textEditImage ? textEditWorkspaceExpanded ? "识别在本机完成。点击文字框后，只需填写改成什么。" : "编辑内容已收起，可在下方查看当前任务进度。" : "程序会在本机识别文字，不消耗 Image 2 额度。"}</span>
+            {textEditImage && !textEditWorkspaceExpanded && (
+              <button
+                type="button"
+                className="text-edit-expand"
+                onClick={() => setTextEditWorkspaceExpanded(true)}
+              >
+                展开编辑内容
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1311,7 +1328,7 @@ export default function Home() {
           ))}
         </div>
       )}
-      {studioMode === "text-edit" && textEditImage && (
+      {studioMode === "text-edit" && textEditImage && textEditWorkspaceExpanded && (
         <TextEditWorkspace
           image={textEditImage}
           regions={textRegions}
@@ -1800,6 +1817,7 @@ export default function Home() {
                           : turn.textEdit.sourceImage;
                         setStudioMode("text-edit");
                         setTextEditImage(sourceImage);
+                        setTextEditWorkspaceExpanded(true);
                         setTextRegions(turn.textEdit.regions.map((region) => ({
                           ...region,
                           text: region.replacement.trim() || region.text,

@@ -4,6 +4,7 @@ import {
   buildTextEditPrompt,
   hasPendingReplacement,
   normalizeRegion,
+  shouldCollapseTextEditWorkspace,
   type TextRegion,
 } from "./text-edit.ts";
 
@@ -65,4 +66,10 @@ test("buildTextEditPrompt supports a manually selected region without recognized
 
   assert.match(prompt, /中央区域/);
   assert.match(prompt, /替换为“今日特价”/);
+});
+
+test("only a new text edit submission collapses the workspace", () => {
+  assert.equal(shouldCollapseTextEditWorkspace(true, false), true);
+  assert.equal(shouldCollapseTextEditWorkspace(true, true), false);
+  assert.equal(shouldCollapseTextEditWorkspace(false, false), false);
 });

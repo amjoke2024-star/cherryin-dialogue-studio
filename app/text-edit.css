@@ -24,6 +24,22 @@
   line-height: 1.55;
 }
 
+.text-edit-expand {
+  width: fit-content;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  color: #16c7df;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.text-edit-expand:hover {
+  color: #72e6f5;
+}
+
 .prompt-tools .send:disabled {
   cursor: not-allowed;
   opacity: 0.38;

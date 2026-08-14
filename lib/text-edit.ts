@@ -37,6 +37,13 @@ export function hasPendingReplacement(regions: TextRegion[]): boolean {
   });
 }
 
+export function shouldCollapseTextEditWorkspace(
+  isTextEdit: boolean,
+  isRepeat: boolean,
+): boolean {
+  return isTextEdit && !isRepeat;
+}
+
 function locationName(box: NormalizedBox) {
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
