@@ -10,9 +10,17 @@ import {
   useState,
 } from "react";
 import "./model-grid.css";
-import { decideJobTermination } from "../lib/job-lifecycle";
+import TextEditWorkspace from "./components/TextEditWorkspace";
+import { recognizeImageText, terminateOcr } from "../lib/browser-ocr";
+import { decideJobTermination, type StudioMode } from "../lib/job-lifecycle";
+import {
+  buildTextEditPrompt,
+  hasPendingReplacement,
+  type TextRegion,
+} from "../lib/text-edit";
 
 type Attachment = { name: string; data: string };
+type TextEditState = { sourceImage: Attachment; regions: TextRegion[] };
 type Turn = {
   id: string;
   prompt: string;
@@ -29,6 +37,8 @@ type Turn = {
   apiSource?: ApiSource;
   status?: "completed" | "failed" | "cancelled";
   error?: string;
+  mode?: StudioMode;
+  textEdit?: TextEditState;
 };
 type GenerationJob = Omit<
   Turn,
@@ -283,6 +293,7 @@ function imageDimensions(source: string) {
 }
 
 export default function Home() {
+  const [studioMode, setStudioMode] = useState<StudioMode>("generate");
   const [apiKey, setApiKey] = useState("");
   const [bflApiKey, setBflApiKey] = useState("");
   const [apilioApiKey, setApilioApiKey] = useState("");
@@ -292,6 +303,11 @@ export default function Home() {
   const [apilioModels, setApilioModels] = useState<typeof fallbackModels>([]);
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [textEditImage, setTextEditImage] = useState<Attachment | null>(null);
+  const [textRegions, setTextRegions] = useState<TextRegion[]>([]);
+  const [activeTextRegion, setActiveTextRegion] = useState<string | null>(null);
+  const [recognizingText, setRecognizingText] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
   const [modelOptions, setModelOptions] = useState(fallbackModels);
   const [model, setModel] = useState(fallbackModels[0].id);
   const [expandedModelVendors, setExpandedModelVendors] = useState<
@@ -335,6 +351,7 @@ export default function Home() {
   const explicitCancelRef = useRef(false);
   const processingRef = useRef(false);
   const queueRef = useRef<GenerationJob[]>([]);
+  const ocrRequestRef = useRef(0);
 
   useEffect(() => {
     try {
@@ -363,6 +380,8 @@ export default function Home() {
       window.removeEventListener("pageshow", resumePage);
     };
   }, []);
+
+  useEffect(() => () => { void terminateOcr(); }, []);
 
   useEffect(() => {
     const restoredKey = localStorage.getItem("dialogue-studio-api-key") || "";
@@ -778,8 +797,55 @@ export default function Home() {
   function newChat() {
     setPrompt("");
     setAttachments([]);
+    setTextEditImage(null);
+    setTextRegions([]);
+    setActiveTextRegion(null);
+    ocrRequestRef.current += 1;
+    setRecognizingText(false);
+    setOcrProgress(0);
     setError("");
     setPanel(null);
+  }
+
+  function switchStudioMode(next: StudioMode) {
+    setStudioMode(next);
+    setPanel(null);
+    setError("");
+    if (next === "text-edit" && apiSource === "bfl") {
+      const nextSource: ApiSource = apilioApiKey.trim() ? "apilio" : "cherryin";
+      setApiSource(nextSource);
+      const options = nextSource === "apilio" ? apilioModels : cherryModels;
+      setModelOptions(options);
+      setModel(initialDefaultModels[nextSource]);
+    } else if (next === "text-edit" && !isGptImage2(model)) {
+      setModel(initialDefaultModels[apiSource]);
+    }
+  }
+
+  async function setTextEditSource(file: File) {
+    const requestId = ocrRequestRef.current + 1;
+    ocrRequestRef.current = requestId;
+    const image = { name: file.name, data: await readFile(file) };
+    if (ocrRequestRef.current !== requestId) return;
+    setTextEditImage(image);
+    setTextRegions([]);
+    setActiveTextRegion(null);
+    setRecognizingText(true);
+    setOcrProgress(0);
+    setError("");
+    try {
+      const regions = await recognizeImageText(image.data, setOcrProgress);
+      if (ocrRequestRef.current !== requestId) return;
+      setTextRegions(regions);
+      setActiveTextRegion(regions[0]?.id || null);
+      if (!regions.length)
+        setError("没有识别到文字，请在图片上拖动，手动框选要修改的位置。");
+    } catch (ocrError) {
+      if (ocrRequestRef.current !== requestId) return;
+      setError(ocrError instanceof Error ? `文字识别失败：${ocrError.message}` : "文字识别失败，请手动框选文字区域。");
+    } finally {
+      if (ocrRequestRef.current === requestId) setRecognizingText(false);
+    }
   }
   function deleteTurn(id: string) {
     setTurns((current) => {
@@ -796,6 +862,15 @@ export default function Home() {
     setRecentMenu(null);
   }
   async function addFiles(incoming: File[]) {
+    if (studioMode === "text-edit") {
+      const file = incoming.find((item) => item.type.startsWith("image/"));
+      if (!file) {
+        setError("请拖入 PNG、JPEG 或 WebP 图片");
+        return;
+      }
+      await setTextEditSource(file);
+      return;
+    }
     const files = incoming
       .filter((file) => file.type.startsWith("image/"))
       .slice(0, 5 - attachments.length);
@@ -886,9 +961,26 @@ export default function Home() {
     }
   }
   async function send(repeat?: Turn) {
-    const runPrompt = repeat?.prompt || prompt.trim();
-    const runAttachments = repeat?.attachments || attachments;
-    const runModel = repeat?.modelId || model;
+    const isTextEdit = repeat?.mode === "text-edit" || (!repeat && studioMode === "text-edit");
+    const textEditState = repeat?.textEdit || (textEditImage ? { sourceImage: textEditImage, regions: textRegions } : undefined);
+    if (isTextEdit && !textEditState) {
+      setError("请先上传需要改字的图片");
+      return;
+    }
+    if (isTextEdit && !hasPendingReplacement(textEditState?.regions || [])) {
+      setError("请至少填写一处要替换的新文字");
+      return;
+    }
+    const runPrompt = isTextEdit
+      ? buildTextEditPrompt(textEditState?.regions || [])
+      : repeat?.prompt || prompt.trim();
+    const runAttachments = isTextEdit
+      ? [textEditState!.sourceImage]
+      : repeat?.attachments || attachments;
+    const requestedModel = repeat?.modelId || model;
+    const runModel = isTextEdit && !isGptImage2(requestedModel)
+      ? initialDefaultModels[apiSource === "bfl" ? "cherryin" : apiSource]
+      : requestedModel;
     const runApiSource =
       repeat?.apiSource || (repeat ? sourceForModel(runModel) : apiSource);
     const runModelName = repeat?.modelName || activeModel.name;
@@ -928,7 +1020,7 @@ export default function Home() {
       runRatio === "智能"
         ? await intelligentOutputSize(runAttachments, runResolution, runModel)
         : fixedOutputSize(runRatio, runResolution, runModel);
-    const runCount = repeat?.count || count;
+    const runCount = isTextEdit ? 1 : repeat?.count || count;
     if (!runPrompt) {
       setError("请输入创作内容");
       return;
@@ -957,12 +1049,16 @@ export default function Home() {
       count: runCount,
       attachments: runAttachments,
       submittedAt: Date.now(),
+      mode: isTextEdit ? "text-edit" : "generate",
+      textEdit: isTextEdit ? textEditState : undefined,
     };
     setError("");
     setPanel(null);
     if (!repeat) {
-      setPrompt("");
-      setAttachments([]);
+      if (studioMode === "generate") {
+        setPrompt("");
+        setAttachments([]);
+      }
     }
     if (processingRef.current) {
       queueRef.current = [...queueRef.current, job];
@@ -1021,6 +1117,11 @@ export default function Home() {
         resolution: job.resolution,
         count: completedCount,
         attachments: data.references || job.attachments,
+        mode: job.mode,
+        textEdit: job.textEdit ? {
+          ...job.textEdit,
+          sourceImage: data.references?.[0] || job.textEdit.sourceImage,
+        } : undefined,
       };
       setTurns((current) => persistHistory([...current, turn]));
       if (completedCount < (job.count || 1))
@@ -1051,6 +1152,8 @@ export default function Home() {
         resolution: job.resolution,
         count: job.count || 1,
         attachments: job.attachments,
+        mode: job.mode,
+        textEdit: job.textEdit,
         status: termination.recordCancelled ? "cancelled" : "failed",
         error: termination.recordCancelled ? undefined : message,
       };
@@ -1109,18 +1212,27 @@ export default function Home() {
     >
       {dragActive && (
         <div className="drop-overlay">
-          <strong>松开即可批量上传</strong>
-          <span>支持 PNG、JPEG、WebP · 最多 5 张</span>
+          <strong>{studioMode === "text-edit" ? "松开即可识别文字" : "松开即可批量上传"}</strong>
+          <span>{studioMode === "text-edit" ? "支持 PNG、JPEG、WebP · 每次 1 张" : "支持 PNG、JPEG、WebP · 最多 5 张"}</span>
         </div>
       )}
       <div className="prompt-top">
         <button
           className={
-            attachments.length ? "upload-tile has-image" : "upload-tile"
+            (studioMode === "text-edit" ? textEditImage : attachments.length)
+              ? "upload-tile has-image"
+              : "upload-tile"
           }
           onClick={() => fileInput.current?.click()}
         >
-          {attachments[0] ? (
+          {studioMode === "text-edit" && textEditImage ? (
+            <>
+              <span className="upload-stack">
+                <img src={textEditImage.data} alt={textEditImage.name} />
+              </span>
+              <b>↻</b>
+            </>
+          ) : studioMode === "generate" && attachments[0] ? (
             <>
               <span className="upload-stack">
                 {attachments.slice(0, 3).map((item, index) => (
@@ -1137,19 +1249,26 @@ export default function Home() {
             "＋"
           )}
         </button>
-        <textarea
-          ref={promptInput}
-          value={prompt}
-          onChange={(e) =>
-            changePrompt(e.target.value, e.currentTarget.selectionStart)
-          }
-          onKeyDown={keyDown}
-          onPaste={(event) => void pasteImages(event)}
-          placeholder="上传参考图、输入文字，描述你想生成的图片。"
-          rows={3}
-        />
+        {studioMode === "generate" ? (
+          <textarea
+            ref={promptInput}
+            value={prompt}
+            onChange={(e) =>
+              changePrompt(e.target.value, e.currentTarget.selectionStart)
+            }
+            onKeyDown={keyDown}
+            onPaste={(event) => void pasteImages(event)}
+            placeholder="上传参考图、输入文字，描述你想生成的图片。"
+            rows={3}
+          />
+        ) : (
+          <div className="text-edit-intro">
+            <strong>{textEditImage ? "选择图片中的文字" : "上传一张需要改字的图片"}</strong>
+            <span>{textEditImage ? "识别在本机完成。点击文字框后，只需填写改成什么。" : "程序会在本机识别文字，不消耗 Image 2 额度。"}</span>
+          </div>
+        )}
       </div>
-      {!!attachments.length && (
+      {studioMode === "generate" && !!attachments.length && (
         <div className="attachments">
           {attachments.map((item, index) => (
             <div className="attachment-chip" key={`${item.name}-${index}`}>
@@ -1181,8 +1300,30 @@ export default function Home() {
           ))}
         </div>
       )}
+      {studioMode === "text-edit" && textEditImage && (
+        <TextEditWorkspace
+          image={textEditImage}
+          regions={textRegions}
+          activeId={activeTextRegion}
+          recognizing={recognizingText}
+          progress={ocrProgress}
+          onActiveChange={setActiveTextRegion}
+          onRegionsChange={setTextRegions}
+        />
+      )}
       <div className="prompt-tools">
-        <button className="tool active">图片生成</button>
+        <button
+          className={studioMode === "generate" ? "tool active" : "tool"}
+          onClick={() => switchStudioMode("generate")}
+        >
+          图片生成
+        </button>
+        <button
+          className={studioMode === "text-edit" ? "tool active" : "tool"}
+          onClick={() => switchStudioMode("text-edit")}
+        >
+          图片改字
+        </button>
         <div className="popover-anchor" data-floating-panel>
           <button
             className={panel === "model" ? "tool selected" : "tool"}
@@ -1278,7 +1419,7 @@ export default function Home() {
             className={panel === "format" ? "tool selected" : "tool"}
             onClick={() => setPanel(panel === "format" ? null : "format")}
           >
-            {ratioName} <span>|</span> {resolution} <span>|</span> {count}
+            {ratioName} <span>|</span> {resolution} <span>|</span> {studioMode === "text-edit" ? 1 : count}
           </button>
           {panel === "format" && (
             <div className="popover format-popover">
@@ -1335,7 +1476,7 @@ export default function Home() {
                     </button>
                   </div>
                 </div>
-                <div>
+                <div className={studioMode === "text-edit" ? "mode-hidden" : ""}>
                   <p>生成数量</p>
                   <div className="segments counts">
                     {[1, 2, 3, 4].map((value) => (
@@ -1353,7 +1494,7 @@ export default function Home() {
             </div>
           )}
         </div>
-        <div className="tooltip-anchor">
+        <div className={studioMode === "text-edit" ? "tooltip-anchor mode-hidden" : "tooltip-anchor"}>
           <button
             className="tool icon-tool"
             aria-label="文字效果增强"
@@ -1363,7 +1504,7 @@ export default function Home() {
           </button>
           <span className="tool-tooltip">文字效果增强</span>
         </div>
-        <div className="popover-anchor" data-floating-panel>
+        <div className={studioMode === "text-edit" ? "popover-anchor mode-hidden" : "popover-anchor"} data-floating-panel>
           <button
             className={
               panel === "mentions"
@@ -1416,7 +1557,8 @@ export default function Home() {
         )}
         <button
           className="send"
-          aria-label={busy ? "加入生成队列" : "开始生成"}
+          disabled={studioMode === "text-edit" && (recognizingText || !textEditImage || !hasPendingReplacement(textRegions))}
+          aria-label={busy ? "加入生成队列" : studioMode === "text-edit" ? "开始改字" : "开始生成"}
           onClick={() => void send()}
         >
           <span aria-hidden>↑</span>
@@ -1426,7 +1568,7 @@ export default function Home() {
       <input
         ref={fileInput}
         hidden
-        multiple
+        multiple={studioMode === "generate"}
         accept="image/png,image/jpeg,image/webp"
         type="file"
         onChange={chooseFiles}
@@ -1640,12 +1782,28 @@ export default function Home() {
                 <div className="result-actions">
                   <button
                     onClick={() => {
+                      if (turn.mode === "text-edit" && turn.textEdit) {
+                        const sourceImage = turn.images[0]
+                          ? { name: `继续修改-${turn.textEdit.sourceImage.name}`, data: turn.images[0] }
+                          : turn.textEdit.sourceImage;
+                        setStudioMode("text-edit");
+                        setTextEditImage(sourceImage);
+                        setTextRegions(turn.textEdit.regions.map((region) => ({
+                          ...region,
+                          text: region.replacement.trim() || region.text,
+                          replacement: "",
+                        })));
+                        setActiveTextRegion(turn.textEdit.regions[0]?.id || null);
+                        setError("");
+                        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+                        return;
+                      }
                       setPrompt(turn.prompt);
                       setAttachments(turn.attachments || []);
                       promptInput.current?.focus();
                     }}
                   >
-                    重新编辑
+                    {turn.mode === "text-edit" ? "继续改字" : "重新编辑"}
                   </button>
                   <button onClick={() => void send(turn)}>再次生成</button>
                   <div className="result-menu-anchor" data-result-menu>
@@ -2088,6 +2246,9 @@ function persistHistory(items: Turn[]) {
     attachments: (turn.attachments || []).filter((item) =>
       item.data.startsWith("/generated/"),
     ),
+    textEdit: turn.textEdit?.sourceImage.data.startsWith("/generated/")
+      ? turn.textEdit
+      : undefined,
   }));
   while (storable.length) {
     try {

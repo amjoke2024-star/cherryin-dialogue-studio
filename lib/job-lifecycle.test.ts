@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decideJobTermination } from "./job-lifecycle.ts";
+import { decideJobTermination, normalizeStudioMode } from "./job-lifecycle.ts";
+
+test("old jobs without a mode remain image generation jobs", () => {
+  assert.equal(normalizeStudioMode(undefined), "generate");
+  assert.equal(normalizeStudioMode("text-edit"), "text-edit");
+  assert.equal(normalizeStudioMode("unknown"), "generate");
+});
 
 test("page unload preserves the active job without recording cancellation", () => {
   assert.deepEqual(

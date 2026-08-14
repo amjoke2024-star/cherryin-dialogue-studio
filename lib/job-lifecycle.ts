@@ -4,6 +4,12 @@ export type JobTerminationInput = {
   explicitCancel: boolean;
 };
 
+export type StudioMode = "generate" | "text-edit";
+
+export function normalizeStudioMode(value: unknown): StudioMode {
+  return value === "text-edit" ? "text-edit" : "generate";
+}
+
 export function decideJobTermination(input: JobTerminationInput) {
   if (input.pageUnloading)
     return { preserveWork: true, recordCancelled: false };

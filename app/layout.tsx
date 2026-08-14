@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./refinements.css";
+import "./text-edit.css";
 
 export const metadata: Metadata = {
   title: "谢师傅工作室",
