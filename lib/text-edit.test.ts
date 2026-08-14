@@ -6,11 +6,51 @@ import {
   isLikelyTextRegion,
   normalizeRegion,
   persistentTextEditReferences,
+  preferredTextEditSource,
+  resizeTextRegionBox,
   shouldDismissTextEditWorkspace,
   shouldCollapseTextEditWorkspace,
   textEditGuideRegions,
   type TextRegion,
 } from "./text-edit.ts";
+
+test("text edit adopts the first uploaded image without replacing an existing source", () => {
+  const first = { name: "第一张.png", data: "first" };
+  const second = { name: "第二张.png", data: "second" };
+  const existing = { name: "正在改字.png", data: "existing" };
+
+  assert.equal(preferredTextEditSource(null, [first, second]), first);
+  assert.equal(preferredTextEditSource(existing, [first, second]), existing);
+  assert.equal(preferredTextEditSource(null, []), null);
+});
+
+test("resizing a text box moves only the selected corner", () => {
+  const box = { x: 0.2, y: 0.3, width: 0.4, height: 0.2 };
+
+  assert.deepEqual(resizeTextRegionBox(box, "north-west", { x: 0.1, y: 0.2 }), {
+    x: 0.1, y: 0.2, width: 0.5, height: 0.3,
+  });
+  assert.deepEqual(resizeTextRegionBox(box, "north-east", { x: 0.8, y: 0.2 }), {
+    x: 0.2, y: 0.2, width: 0.6, height: 0.3,
+  });
+  assert.deepEqual(resizeTextRegionBox(box, "south-west", { x: 0.1, y: 0.7 }), {
+    x: 0.1, y: 0.3, width: 0.5, height: 0.4,
+  });
+  assert.deepEqual(resizeTextRegionBox(box, "south-east", { x: 0.8, y: 0.7 }), {
+    x: 0.2, y: 0.3, width: 0.6, height: 0.4,
+  });
+});
+
+test("resizing stays inside the image and cannot collapse the text box", () => {
+  const box = { x: 0.2, y: 0.3, width: 0.4, height: 0.2 };
+
+  assert.deepEqual(resizeTextRegionBox(box, "north-west", { x: -1, y: -1 }), {
+    x: 0, y: 0, width: 0.6, height: 0.5,
+  });
+  assert.deepEqual(resizeTextRegionBox(box, "south-east", { x: 0.1, y: 0.1 }), {
+    x: 0.2, y: 0.3, width: 0.01, height: 0.01,
+  });
+});
 
 test("normalizeRegion orders negative dimensions and clamps to the image", () => {
   assert.deepEqual(

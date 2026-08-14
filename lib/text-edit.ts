@@ -14,6 +14,14 @@ export type TextRegion = {
   source: "ocr" | "manual";
 };
 
+export type ResizeCorner = "north-west" | "north-east" | "south-west" | "south-east";
+
+type Point = { x: number; y: number };
+
+export function preferredTextEditSource<T>(current: T | null, attachments: T[]): T | null {
+  return current ?? attachments[0] ?? null;
+}
+
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
 const stable = (value: number) => Math.round(value * 1_000_000) / 1_000_000;
 
@@ -29,6 +37,41 @@ export function normalizeRegion(box: NormalizedBox): NormalizedBox {
     width: stable(right - left),
     height: stable(bottom - top),
   };
+}
+
+export function resizeTextRegionBox(
+  box: NormalizedBox,
+  corner: ResizeCorner,
+  point: Point,
+): NormalizedBox {
+  const normalized = normalizeRegion(box);
+  const left = normalized.x;
+  const top = normalized.y;
+  const right = left + normalized.width;
+  const bottom = top + normalized.height;
+  const minimum = 0.01;
+  const nextX = clamp(point.x);
+  const nextY = clamp(point.y);
+
+  const nextLeft = corner.endsWith("west")
+    ? Math.min(nextX, right - minimum)
+    : left;
+  const nextRight = corner.endsWith("east")
+    ? Math.max(nextX, left + minimum)
+    : right;
+  const nextTop = corner.startsWith("north")
+    ? Math.min(nextY, bottom - minimum)
+    : top;
+  const nextBottom = corner.startsWith("south")
+    ? Math.max(nextY, top + minimum)
+    : bottom;
+
+  return normalizeRegion({
+    x: nextLeft,
+    y: nextTop,
+    width: nextRight - nextLeft,
+    height: nextBottom - nextTop,
+  });
 }
 
 export function hasPendingReplacement(regions: TextRegion[]): boolean {

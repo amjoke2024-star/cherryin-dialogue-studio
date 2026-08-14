@@ -6,7 +6,14 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { copyText } from "../../lib/clipboard";
-import { isLikelyTextRegion, normalizeRegion, type NormalizedBox, type TextRegion } from "../../lib/text-edit";
+import {
+  isLikelyTextRegion,
+  normalizeRegion,
+  resizeTextRegionBox,
+  type NormalizedBox,
+  type ResizeCorner,
+  type TextRegion,
+} from "../../lib/text-edit";
 
 type ReferenceImage = { name: string; data: string };
 
@@ -22,6 +29,14 @@ export type TextEditWorkspaceProps = {
 };
 
 type Point = { x: number; y: number };
+type ResizeState = { id: string; corner: ResizeCorner; box: NormalizedBox };
+
+const resizeHandles: Array<{ corner: ResizeCorner; label: string }> = [
+  { corner: "north-west", label: "调整左上角" },
+  { corner: "north-east", label: "调整右上角" },
+  { corner: "south-west", label: "调整左下角" },
+  { corner: "south-east", label: "调整右下角" },
+];
 
 function pointerPosition(event: ReactPointerEvent<HTMLDivElement>): Point {
   const rect = event.currentTarget.getBoundingClientRect();
@@ -56,6 +71,8 @@ export default function TextEditWorkspace({
   const [copyStatus, setCopyStatus] = useState<Record<string, "copied" | "failed">>({});
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const listRefs = useRef(new Map<string, HTMLDivElement>());
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const resizeStateRef = useRef<ResizeState | null>(null);
 
   const updateRegion = (id: string, patch: Partial<TextRegion>) => {
     onRegionsChange(regions.map((region) => region.id === id ? { ...region, ...patch } : region));
@@ -76,11 +93,25 @@ export default function TextEditWorkspace({
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (resizeState && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      updateRegion(resizeState.id, {
+        box: resizeTextRegionBox(resizeState.box, resizeState.corner, pointerPosition(event)),
+      });
+      return;
+    }
     if (!dragStart || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
     setDragEnd(pointerPosition(event));
   };
 
   const finishDrawing = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeStateRef.current) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      resizeStateRef.current = null;
+      return;
+    }
     if (!dragStart || !dragEnd) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -114,6 +145,19 @@ export default function TextEditWorkspace({
     }, 1600);
   };
 
+  const beginResize = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    region: TextRegion,
+    corner: ResizeCorner,
+  ) => {
+    if (recognizing || !event.isPrimary) return;
+    event.preventDefault();
+    event.stopPropagation();
+    overlayRef.current?.setPointerCapture(event.pointerId);
+    resizeStateRef.current = { id: region.id, corner, box: region.box };
+    onActiveChange(region.id);
+  };
+
   return (
     <section className="text-edit-workspace" aria-label="图片改字工作区">
       <div className="text-edit-workspace-actions">
@@ -127,18 +171,22 @@ export default function TextEditWorkspace({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={image.data} alt={image.name} className="text-edit-source-image" draggable={false} />
           <div
+            ref={overlayRef}
             className={`text-edit-overlay${recognizing ? " is-recognizing" : ""}`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={finishDrawing}
-            onPointerCancel={() => { setDragStart(null); setDragEnd(null); }}
+            onPointerCancel={() => {
+              resizeStateRef.current = null;
+              setDragStart(null);
+              setDragEnd(null);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Escape") { setDragStart(null); setDragEnd(null); }
             }}
           >
             {visibleRegions.map((region, index) => (
-              <button
-                type="button"
+              <div
                 key={region.id}
                 className={`text-region-box${activeId === region.id ? " is-active" : ""}${region.replacement.trim() ? " has-replacement" : ""}`}
                 style={{
@@ -149,10 +197,28 @@ export default function TextEditWorkspace({
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => activate(region.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") activate(region.id);
+                }}
+                role="button"
+                tabIndex={0}
                 aria-label={`选择文字 ${region.text || index + 1}`}
               >
-                <span>{index + 1}</span>
-              </button>
+                <span className="text-region-number">{index + 1}</span>
+                {activeId === region.id && resizeHandles.map(({ corner, label }) => (
+                  <button
+                    type="button"
+                    key={corner}
+                    className={`text-region-resize-handle is-${corner}`}
+                    aria-label={label}
+                    onPointerDown={(event) => beginResize(event, region, corner)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                  />
+                ))}
+              </div>
             ))}
             {currentDraft && (
               <div
@@ -178,7 +244,7 @@ export default function TextEditWorkspace({
               <strong>{Math.round(progress * 100)}%</strong>
             </>
           ) : (
-            <span>点击文字框修改；没有识别到的文字可直接在图片上拖框。</span>
+            <span>点击文字框修改，拖动四角调整范围；没有识别到的文字可直接在图片上拖框。</span>
           )}
         </div>
       </div>

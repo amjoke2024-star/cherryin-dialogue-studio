@@ -18,6 +18,7 @@ import {
   buildTextEditPrompt,
   hasPendingReplacement,
   persistentTextEditReferences,
+  preferredTextEditSource,
   shouldCollapseTextEditWorkspace,
   shouldDismissTextEditWorkspace,
   type TextRegion,
@@ -862,6 +863,10 @@ export default function Home() {
     setStudioMode(next);
     setPanel(null);
     setError("");
+    if (next === "text-edit") {
+      const source = preferredTextEditSource(textEditImage, attachments);
+      if (source && !textEditImage) void recognizeTextEditSource(source);
+    }
     if (next === "text-edit" && apiSource === "bfl") {
       const nextSource: ApiSource = apilioApiKey.trim() ? "apilio" : "cherryin";
       setApiSource(nextSource);
@@ -873,11 +878,9 @@ export default function Home() {
     }
   }
 
-  async function setTextEditSource(file: File) {
+  async function recognizeTextEditSource(image: Attachment) {
     const requestId = ocrRequestRef.current + 1;
     ocrRequestRef.current = requestId;
-    const image = { name: file.name, data: await readFile(file) };
-    if (ocrRequestRef.current !== requestId) return;
     setTextEditImage(image);
     setTextEditWorkspaceExpanded(true);
     setTextRegions([]);
@@ -898,6 +901,11 @@ export default function Home() {
     } finally {
       if (ocrRequestRef.current === requestId) setRecognizingText(false);
     }
+  }
+
+  async function setTextEditSource(file: File) {
+    const image = { name: file.name, data: await readFile(file) };
+    await recognizeTextEditSource(image);
   }
   function deleteTurn(id: string) {
     setTurns((current) => {
