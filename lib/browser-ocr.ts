@@ -26,6 +26,13 @@ type OcrWorker = {
 let workerPromise: Promise<OcrWorker> | null = null;
 let progressListener: ((value: number) => void) | undefined;
 
+function cleanOcrText(value: string) {
+  return value
+    .trim()
+    .replace(/([\p{Script=Han}])\s+(?=[\p{Script=Han}])/gu, "$1")
+    .replace(/\s+([，。！？,.!?：:；;])/g, "$1");
+}
+
 export function ocrLinesToRegions(
   lines: RawOcrLine[],
   imageWidth: number,
@@ -36,7 +43,7 @@ export function ocrLinesToRegions(
   }
 
   return lines.flatMap((line, index) => {
-    const text = line.text.trim();
+    const text = cleanOcrText(line.text);
     const width = line.bbox.x1 - line.bbox.x0;
     const height = line.bbox.y1 - line.bbox.y0;
     if (!text || width <= 0 || height <= 0) return [];

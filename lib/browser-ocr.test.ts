@@ -24,6 +24,16 @@ test("ocrLinesToRegions turns pixel boxes into proportional editable regions", (
   );
 });
 
+test("ocrLinesToRegions removes OCR spacing between Chinese characters", () => {
+  const [region] = ocrLinesToRegions(
+    [{ text: "你 好 , 想 创 作 什 么 ?", confidence: 90, bbox: { x0: 0, y0: 0, x1: 400, y1: 40 } }],
+    800,
+    400,
+  );
+
+  assert.equal(region.text, "你好, 想创作什么?");
+});
+
 test("ocrLinesToRegions rejects missing image dimensions", () => {
   assert.throws(() => ocrLinesToRegions([], 0, 100), /图片尺寸/);
 });
