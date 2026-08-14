@@ -39,6 +39,33 @@
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.text-edit-workspace-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  min-height: 30px;
+}
+
+.text-edit-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #d9dbe0;
+  background: rgba(255, 255, 255, 0.035);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.text-edit-back:hover {
+  border-color: rgba(255, 180, 74, 0.42);
+  color: #fff;
+  background: rgba(255, 180, 74, 0.08);
+}
+
 .text-edit-canvas-column,
 .text-edit-list-column {
   min-width: 0;
@@ -265,6 +292,51 @@
 .text-edit-region-row input:focus {
   border-color: #ffb44a;
   box-shadow: 0 0 0 2px rgba(255, 180, 74, 0.12);
+}
+
+.text-edit-region-row input[readonly] {
+  padding-right: 60px;
+  color: #d3d5da;
+  background: rgba(255, 255, 255, 0.025);
+  cursor: text;
+}
+
+.text-edit-copy {
+  position: absolute;
+  right: 5px;
+  bottom: 4px;
+  min-width: 48px;
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  color: #aeb1b9;
+  background: rgba(255, 255, 255, 0.07);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.text-edit-region-row label {
+  position: relative;
+}
+
+.text-edit-copy:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.text-edit-copy.is-copied {
+  color: #9ee6b1;
+}
+
+.text-edit-copy.is-failed {
+  color: #ff9d9d;
+}
+
+.text-edit-copy:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .text-edit-remove {

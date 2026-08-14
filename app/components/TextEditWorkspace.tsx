@@ -5,6 +5,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { copyText } from "../../lib/clipboard";
 import { normalizeRegion, type NormalizedBox, type TextRegion } from "../../lib/text-edit";
 
 type ReferenceImage = { name: string; data: string };
@@ -15,6 +16,7 @@ export type TextEditWorkspaceProps = {
   activeId: string | null;
   recognizing: boolean;
   progress: number;
+  onBack(): void;
   onActiveChange(id: string | null): void;
   onRegionsChange(regions: TextRegion[]): void;
 };
@@ -44,11 +46,13 @@ export default function TextEditWorkspace({
   activeId,
   recognizing,
   progress,
+  onBack,
   onActiveChange,
   onRegionsChange,
 }: TextEditWorkspaceProps) {
   const [dragStart, setDragStart] = useState<Point | null>(null);
   const [dragEnd, setDragEnd] = useState<Point | null>(null);
+  const [copyStatus, setCopyStatus] = useState<Record<string, "copied" | "failed">>({});
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const listRefs = useRef(new Map<string, HTMLDivElement>());
 
@@ -93,8 +97,26 @@ export default function TextEditWorkspace({
 
   const currentDraft = dragStart && dragEnd ? draftBox(dragStart, dragEnd) : null;
 
+  const copyOriginalText = async (id: string, value: string) => {
+    const copied = await copyText(value);
+    setCopyStatus((current) => ({ ...current, [id]: copied ? "copied" : "failed" }));
+    window.setTimeout(() => {
+      setCopyStatus((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+    }, 1600);
+  };
+
   return (
     <section className="text-edit-workspace" aria-label="图片改字工作区">
+      <div className="text-edit-workspace-actions">
+        <button type="button" className="text-edit-back" onClick={onBack}>
+          <span aria-hidden="true">←</span>
+          返回重新选图
+        </button>
+      </div>
       <div className="text-edit-canvas-column">
         <div className="text-edit-canvas-shell">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -186,20 +208,31 @@ export default function TextEditWorkspace({
               <label>
                 <span>原文字{region.source === "manual" ? "（手动框选）" : ""}</span>
                 <input
-                  ref={(node) => {
-                    if (node) inputRefs.current.set(region.id, node);
-                    else inputRefs.current.delete(region.id);
-                  }}
                   value={region.text}
                   disabled={recognizing}
                   placeholder="原文字"
+                  readOnly
                   onFocus={() => activate(region.id)}
-                  onChange={(event) => updateRegion(region.id, { text: event.target.value })}
                 />
+                <button
+                  type="button"
+                  className={`text-edit-copy${copyStatus[region.id] ? ` is-${copyStatus[region.id]}` : ""}`}
+                  disabled={recognizing || !region.text}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void copyOriginalText(region.id, region.text);
+                  }}
+                >
+                  {copyStatus[region.id] === "copied" ? "已复制" : copyStatus[region.id] === "failed" ? "复制失败" : "复制"}
+                </button>
               </label>
               <label>
                 <span>改成</span>
                 <input
+                  ref={(node) => {
+                    if (node) inputRefs.current.set(region.id, node);
+                    else inputRefs.current.delete(region.id);
+                  }}
                   value={region.replacement}
                   disabled={recognizing}
                   placeholder="输入新文字"

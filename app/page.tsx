@@ -807,6 +807,17 @@ export default function Home() {
     setPanel(null);
   }
 
+  function resetTextEditDraft() {
+    ocrRequestRef.current += 1;
+    setTextEditImage(null);
+    setTextRegions([]);
+    setActiveTextRegion(null);
+    setRecognizingText(false);
+    setOcrProgress(0);
+    setError("");
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
   function switchStudioMode(next: StudioMode) {
     setStudioMode(next);
     setPanel(null);
@@ -1307,6 +1318,7 @@ export default function Home() {
           activeId={activeTextRegion}
           recognizing={recognizingText}
           progress={ocrProgress}
+          onBack={resetTextEditDraft}
           onActiveChange={setActiveTextRegion}
           onRegionsChange={setTextRegions}
         />
