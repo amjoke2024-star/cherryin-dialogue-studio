@@ -237,6 +237,24 @@
   font-size: 11px;
 }
 
+.text-edit-filter-toggle {
+  flex: none;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 180, 74, 0.28);
+  border-radius: 6px;
+  color: #ffbd5f;
+  background: rgba(255, 180, 74, 0.07);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.text-edit-filter-toggle:hover {
+  border-color: rgba(255, 180, 74, 0.5);
+  color: #ffd18d;
+  background: rgba(255, 180, 74, 0.12);
+}
+
 .text-edit-region-list {
   display: flex;
   flex: 1;

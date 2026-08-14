@@ -6,7 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { copyText } from "../../lib/clipboard";
-import { normalizeRegion, type NormalizedBox, type TextRegion } from "../../lib/text-edit";
+import { isLikelyTextRegion, normalizeRegion, type NormalizedBox, type TextRegion } from "../../lib/text-edit";
 
 type ReferenceImage = { name: string; data: string };
 
@@ -52,6 +52,7 @@ export default function TextEditWorkspace({
 }: TextEditWorkspaceProps) {
   const [dragStart, setDragStart] = useState<Point | null>(null);
   const [dragEnd, setDragEnd] = useState<Point | null>(null);
+  const [showAllRegions, setShowAllRegions] = useState(false);
   const [copyStatus, setCopyStatus] = useState<Record<string, "copied" | "failed">>({});
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const listRefs = useRef(new Map<string, HTMLDivElement>());
@@ -96,6 +97,10 @@ export default function TextEditWorkspace({
   };
 
   const currentDraft = dragStart && dragEnd ? draftBox(dragStart, dragEnd) : null;
+  const visibleRegions = showAllRegions
+    ? regions
+    : regions.filter(isLikelyTextRegion);
+  const hiddenCount = regions.length - visibleRegions.length;
 
   const copyOriginalText = async (id: string, value: string) => {
     const copied = await copyText(value);
@@ -131,7 +136,7 @@ export default function TextEditWorkspace({
               if (event.key === "Escape") { setDragStart(null); setDragEnd(null); }
             }}
           >
-            {regions.map((region, index) => (
+            {visibleRegions.map((region, index) => (
               <button
                 type="button"
                 key={region.id}
@@ -182,19 +187,42 @@ export default function TextEditWorkspace({
         <header>
           <div>
             <strong>识别到的文字</strong>
-            <small>{regions.length ? `${regions.length} 处` : "等待识别"}</small>
+            <small>
+              {regions.length
+                ? hiddenCount
+                  ? `显示 ${visibleRegions.length} 处 · 隐藏 ${hiddenCount} 处`
+                  : `${visibleRegions.length} 处`
+                : "等待识别"}
+            </small>
           </div>
-          <span>只填写需要替换的内容</span>
+          {regions.length > visibleRegions.length || showAllRegions ? (
+            <button
+              type="button"
+              className="text-edit-filter-toggle"
+              onClick={() => {
+                const nextShowAll = !showAllRegions;
+                setShowAllRegions(nextShowAll);
+                if (!nextShowAll && activeId) {
+                  const active = regions.find((region) => region.id === activeId);
+                  if (active && !isLikelyTextRegion(active)) onActiveChange(null);
+                }
+              }}
+            >
+              {showAllRegions ? "隐藏低可信框" : "显示全部"}
+            </button>
+          ) : (
+            <span>只填写需要替换的内容</span>
+          )}
         </header>
 
         <div className="text-edit-region-list">
-          {!recognizing && regions.length === 0 && (
+          {!recognizing && visibleRegions.length === 0 && (
             <div className="text-edit-empty">
-              <strong>没有识别到文字</strong>
-              <span>请在左侧图片上拖动，手动框选要修改的位置。</span>
+              <strong>{regions.length ? "低可信结果已隐藏" : "没有识别到文字"}</strong>
+              <span>{regions.length ? "点击“显示全部”查看，或直接在左侧图片上拖框。" : "请在左侧图片上拖动，手动框选要修改的位置。"}</span>
             </div>
           )}
-          {regions.map((region, index) => (
+          {visibleRegions.map((region, index) => (
             <div
               key={region.id}
               ref={(node) => {

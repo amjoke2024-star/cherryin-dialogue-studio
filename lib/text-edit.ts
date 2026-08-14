@@ -9,6 +9,7 @@ export type TextRegion = {
   id: string;
   text: string;
   replacement: string;
+  confidence?: number;
   box: NormalizedBox;
   source: "ocr" | "manual";
 };
@@ -35,6 +36,19 @@ export function hasPendingReplacement(regions: TextRegion[]): boolean {
     const replacement = region.replacement.trim();
     return Boolean(replacement) && replacement !== region.text.trim();
   });
+}
+
+export function isLikelyTextRegion(region: TextRegion): boolean {
+  if (region.source === "manual" || region.replacement.trim()) return true;
+  if (typeof region.confidence === "number" && region.confidence < 45) return false;
+  if (region.box.width * region.box.height > 0.14) return false;
+
+  const characters = Array.from(region.text.replace(/\s/gu, ""));
+  const meaningful = characters.filter((character) =>
+    /[\p{Script=Han}\p{Letter}\p{Number}]/u.test(character),
+  ).length;
+  if (!meaningful) return false;
+  return meaningful / characters.length >= 0.45;
 }
 
 export function textEditGuideRegions(regions: TextRegion[]) {

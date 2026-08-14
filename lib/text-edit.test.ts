@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildTextEditPrompt,
   hasPendingReplacement,
+  isLikelyTextRegion,
   normalizeRegion,
   persistentTextEditReferences,
   shouldDismissTextEditWorkspace,
@@ -111,4 +112,22 @@ test("expanded text edit workspace only dismisses for an outside pointer", () =>
   assert.equal(shouldDismissTextEditWorkspace(true, true, true), false);
   assert.equal(shouldDismissTextEditWorkspace(false, true, false), false);
   assert.equal(shouldDismissTextEditWorkspace(true, false, false), false);
+});
+
+test("OCR visibility keeps useful text and hides noisy regions", () => {
+  const base: TextRegion = {
+    id: "ocr",
+    text: "新品预售",
+    replacement: "",
+    confidence: 88,
+    box: { x: 0.2, y: 0.1, width: 0.5, height: 0.1 },
+    source: "ocr",
+  };
+
+  assert.equal(isLikelyTextRegion(base), true);
+  assert.equal(isLikelyTextRegion({ ...base, confidence: 30 }), false);
+  assert.equal(isLikelyTextRegion({ ...base, text: "///---" }), false);
+  assert.equal(isLikelyTextRegion({ ...base, box: { x: 0, y: 0.2, width: 0.9, height: 0.2 } }), false);
+  assert.equal(isLikelyTextRegion({ ...base, confidence: 20, replacement: "保留这个" }), true);
+  assert.equal(isLikelyTextRegion({ ...base, confidence: undefined, source: "manual" }), true);
 });

@@ -17,6 +17,7 @@ test("ocrLinesToRegions turns pixel boxes into proportional editable regions", (
         id: "ocr-0",
         text: "今日特价",
         replacement: "",
+        confidence: 92,
         box: { x: 0.2, y: 0.2, width: 0.4, height: 0.16 },
         source: "ocr",
       },

@@ -52,6 +52,7 @@ export function ocrLinesToRegions(
       id: `ocr-${index}`,
       text,
       replacement: "",
+      confidence: line.confidence,
       box: normalizeRegion({
         x: line.bbox.x0 / imageWidth,
         y: line.bbox.y0 / imageHeight,
