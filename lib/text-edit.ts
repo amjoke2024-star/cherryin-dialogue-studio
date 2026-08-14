@@ -59,6 +59,14 @@ export function shouldCollapseTextEditWorkspace(
   return isTextEdit && !isRepeat;
 }
 
+export function shouldDismissTextEditWorkspace(
+  expanded: boolean,
+  hasImage: boolean,
+  pointerInside: boolean,
+): boolean {
+  return expanded && hasImage && !pointerInside;
+}
+
 function locationName(box: NormalizedBox) {
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;

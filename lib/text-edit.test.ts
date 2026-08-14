@@ -5,6 +5,7 @@ import {
   hasPendingReplacement,
   normalizeRegion,
   persistentTextEditReferences,
+  shouldDismissTextEditWorkspace,
   shouldCollapseTextEditWorkspace,
   textEditGuideRegions,
   type TextRegion,
@@ -103,4 +104,11 @@ test("temporary location guides are excluded from persisted references", () => {
   ];
 
   assert.deepEqual(persistentTextEditReferences(references), [references[0]]);
+});
+
+test("expanded text edit workspace only dismisses for an outside pointer", () => {
+  assert.equal(shouldDismissTextEditWorkspace(true, true, false), true);
+  assert.equal(shouldDismissTextEditWorkspace(true, true, true), false);
+  assert.equal(shouldDismissTextEditWorkspace(false, true, false), false);
+  assert.equal(shouldDismissTextEditWorkspace(true, false, false), false);
 });

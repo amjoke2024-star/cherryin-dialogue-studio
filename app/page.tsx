@@ -19,6 +19,7 @@ import {
   hasPendingReplacement,
   persistentTextEditReferences,
   shouldCollapseTextEditWorkspace,
+  shouldDismissTextEditWorkspace,
   type TextRegion,
 } from "../lib/text-edit";
 
@@ -347,6 +348,7 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const promptInput = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const conversationEnd = useRef<HTMLDivElement>(null);
   const initialBottomPositioned = useRef(false);
   const restoredScrollTop = useRef<number | null>(null);
@@ -356,6 +358,38 @@ export default function Home() {
   const processingRef = useRef(false);
   const queueRef = useRef<GenerationJob[]>([]);
   const ocrRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (
+      studioMode !== "text-edit" ||
+      !textEditWorkspaceExpanded ||
+      !textEditImage
+    ) return;
+
+    const dismissOutside = (event: PointerEvent) => {
+      const pointerInside = Boolean(
+        composerRef.current?.contains(event.target as Node),
+      );
+      if (
+        shouldDismissTextEditWorkspace(
+          textEditWorkspaceExpanded,
+          Boolean(textEditImage),
+          pointerInside,
+        )
+      ) {
+        setTextEditWorkspaceExpanded(false);
+      }
+    };
+    const dismissWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTextEditWorkspaceExpanded(false);
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("keydown", dismissWithEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("keydown", dismissWithEscape);
+    };
+  }, [studioMode, textEditWorkspaceExpanded, textEditImage]);
 
   useEffect(() => {
     try {
@@ -1223,6 +1257,7 @@ export default function Home() {
 
   const composer = (
     <div
+      ref={composerRef}
       className={dragActive ? "prompt-card dragging-files" : "prompt-card"}
       onDragEnter={(event) => {
         event.preventDefault();
