@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decideJobTermination, normalizeStudioMode } from "./job-lifecycle.ts";
+import {
+  decideJobTermination,
+  generationTiming,
+  normalizeStudioMode,
+} from "./job-lifecycle.ts";
 
 test("old jobs without a mode remain image generation jobs", () => {
   assert.equal(normalizeStudioMode(undefined), "generate");
@@ -50,4 +54,18 @@ test("page unload wins even before fetch reports an abort", () => {
     }),
     { preserveWork: true, recordCancelled: false },
   );
+});
+
+test("generation timing separates queue wait from actual provider work", () => {
+  assert.deepEqual(generationTiming(1_000, 4_000, 10_000), {
+    queueWaitMs: 3_000,
+    generationDurationMs: 6_000,
+  });
+});
+
+test("older jobs without a server start timestamp keep their total duration", () => {
+  assert.deepEqual(generationTiming(1_000, undefined, 10_000), {
+    queueWaitMs: 0,
+    generationDurationMs: 9_000,
+  });
 });

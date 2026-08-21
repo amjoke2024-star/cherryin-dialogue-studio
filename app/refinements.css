@@ -8,7 +8,7 @@
 
 .api-source-switch {
   display: grid !important;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 6px;
   margin-top: 14px;
   padding: 4px;
@@ -897,6 +897,11 @@
   border-color: #4e5a3d;
   background: #283020;
   color: #c1da92;
+}
+.generation-description .api-source-badge.goapi {
+  border-color: #38566f;
+  background: #1d3041;
+  color: #8dc9ef;
 }
 .generation-details {
   width: 310px;

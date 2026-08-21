@@ -13,7 +13,15 @@ import "./model-grid.css";
 import TextEditWorkspace from "./components/TextEditWorkspace";
 import { recognizeImageText, terminateOcr } from "../lib/browser-ocr";
 import { createTextEditGuideImage } from "../lib/text-edit-guide";
-import { decideJobTermination, type StudioMode } from "../lib/job-lifecycle";
+import {
+  decideJobTermination,
+  generationTiming,
+  type StudioMode,
+} from "../lib/job-lifecycle";
+import {
+  waitForJobStatus,
+  type JobStatusSnapshot,
+} from "../lib/job-status-poller";
 import {
   buildTextEditPrompt,
   hasPendingReplacement,
@@ -23,6 +31,12 @@ import {
   shouldDismissTextEditWorkspace,
   type TextRegion,
 } from "../lib/text-edit";
+import {
+  apiProvider,
+  apiProviderModels,
+  createLatestProviderRequestGate,
+  type ApiSource,
+} from "../lib/api-providers";
 
 type Attachment = { name: string; data: string; transient?: boolean };
 type TextEditState = { sourceImage: Attachment; regions: TextRegion[] };
@@ -32,6 +46,7 @@ type Turn = {
   images: string[];
   createdAt: number;
   generationDurationMs?: number;
+  queueWaitMs?: number;
   modelId?: string;
   modelName?: string;
   ratioName?: string;
@@ -47,16 +62,16 @@ type Turn = {
 };
 type GenerationJob = Omit<
   Turn,
-  "id" | "images" | "createdAt" | "generationDurationMs"
+  "id" | "images" | "createdAt" | "generationDurationMs" | "queueWaitMs"
 > & {
   queueId: string;
   apiKey: string;
   quality: string;
   submittedAt?: number;
+  serverStartedAt?: number;
   referencesOmitted?: boolean;
 };
 type SavedGenerationJob = Omit<GenerationJob, "apiKey">;
-type ApiSource = "cherryin" | "bfl" | "apilio";
 const pendingPreviewId = "__pending__";
 
 const preferredModelStorageKey = (source: ApiSource) =>
@@ -65,6 +80,7 @@ const initialDefaultModels: Record<ApiSource, string> = {
   cherryin: "openai/gpt-image-2",
   bfl: "bfl/flux-2-pro-preview",
   apilio: "gpt-image-2",
+  goapi: "gpt-image-2",
 };
 function savedPreferredModel(source: ApiSource) {
   return typeof window === "undefined"
@@ -302,10 +318,14 @@ export default function Home() {
   const [apiKey, setApiKey] = useState("");
   const [bflApiKey, setBflApiKey] = useState("");
   const [apilioApiKey, setApilioApiKey] = useState("");
+  const [goapiApiKey, setGoapiApiKey] = useState("");
   const [apiSource, setApiSource] = useState<ApiSource>("cherryin");
   const [settingsSource, setSettingsSource] = useState<ApiSource>("cherryin");
   const [cherryModels, setCherryModels] = useState(fallbackModels);
   const [apilioModels, setApilioModels] = useState<typeof fallbackModels>([]);
+  const [goapiModels, setGoapiModels] = useState<typeof fallbackModels>(
+    apiProviderModels("goapi"),
+  );
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [textEditImage, setTextEditImage] = useState<Attachment | null>(null);
@@ -318,7 +338,7 @@ export default function Home() {
   const [model, setModel] = useState(fallbackModels[0].id);
   const [expandedModelVendors, setExpandedModelVendors] = useState<
     Record<ApiSource, string[]>
-  >({ cherryin: [], bfl: [], apilio: [] });
+  >({ cherryin: [], bfl: [], apilio: [], goapi: [] });
   const [size, setSize] = useState(ratios[0].value);
   const [ratioName, setRatioName] = useState("智能");
   const [quality, setQuality] = useState("medium");
@@ -328,6 +348,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [partialImages, setPartialImages] = useState<string[]>([]);
+  const [pendingHidden, setPendingHidden] = useState(false);
   const [pending, setPending] = useState<GenerationJob | null>(null);
   const [queued, setQueued] = useState<GenerationJob[]>([]);
   const [error, setError] = useState("");
@@ -358,6 +379,7 @@ export default function Home() {
   const explicitCancelRef = useRef(false);
   const processingRef = useRef(false);
   const queueRef = useRef<GenerationJob[]>([]);
+  const modelRequestGateRef = useRef(createLatestProviderRequestGate());
   const ocrRequestRef = useRef(0);
 
   useEffect(() => {
@@ -428,7 +450,10 @@ export default function Home() {
       localStorage.getItem("dialogue-studio-bfl-api-key") || "";
     const restoredApilioKey =
       localStorage.getItem("dialogue-studio-apilio-api-key") || "";
+    const restoredGoapiKey =
+      localStorage.getItem(apiProvider("goapi").keyStorageKey) || "";
     let restoredApilioModels: typeof fallbackModels = [];
+    let restoredGoapiModels = apiProviderModels("goapi");
     try {
       const cached = JSON.parse(
         localStorage.getItem("dialogue-studio-apilio-models") || "[]",
@@ -436,15 +461,24 @@ export default function Home() {
       if (Array.isArray(cached))
         restoredApilioModels = cached.filter((item) => item?.id && item?.name);
     } catch {}
+    try {
+      const cached = JSON.parse(
+        localStorage.getItem(apiProvider("goapi").modelsStorageKey) || "[]",
+      ) as typeof fallbackModels;
+      if (Array.isArray(cached) && cached.length)
+        restoredGoapiModels = cached.filter((item) => item?.id && item?.name);
+    } catch {}
     const savedSource = localStorage.getItem("dialogue-studio-api-source");
     const restoredSource: ApiSource =
-      savedSource === "bfl" || savedSource === "apilio"
+      savedSource === "bfl" || savedSource === "apilio" || savedSource === "goapi"
         ? savedSource
         : "cherryin";
     setApiKey(restoredKey);
     setBflApiKey(restoredBflKey);
     setApilioApiKey(restoredApilioKey);
+    setGoapiApiKey(restoredGoapiKey);
     setApilioModels(restoredApilioModels);
+    setGoapiModels(restoredGoapiModels);
     setApiSource(restoredSource);
     setSettingsSource(restoredSource);
     try {
@@ -457,6 +491,7 @@ export default function Home() {
           cherryin: savedVendors.cherryin || [],
           bfl: savedVendors.bfl || [],
           apilio: savedVendors.apilio || [],
+          goapi: savedVendors.goapi || [],
         });
     } catch {}
     if (restoredSource === "bfl") {
@@ -465,6 +500,9 @@ export default function Home() {
     } else if (restoredSource === "apilio") {
       setModelOptions(restoredApilioModels);
       setModel(preferredModelFor("apilio", restoredApilioModels));
+    } else if (restoredSource === "goapi") {
+      setModelOptions(restoredGoapiModels);
+      setModel(preferredModelFor("goapi", restoredGoapiModels));
     } else {
       setModel(preferredModelFor("cherryin", fallbackModels));
     }
@@ -501,6 +539,8 @@ export default function Home() {
         apiKey:
           job.apiSource === "apilio"
             ? restoredApilioKey
+            : job.apiSource === "goapi"
+              ? restoredGoapiKey
             : isBflModel(job.modelId)
               ? restoredBflKey
               : restoredKey,
@@ -510,6 +550,8 @@ export default function Home() {
       const pendingKey =
         saved?.pending?.apiSource === "apilio"
           ? restoredApilioKey
+          : saved?.pending?.apiSource === "goapi"
+            ? restoredGoapiKey
           : isBflModel(saved?.pending?.modelId)
             ? restoredBflKey
             : restoredKey;
@@ -522,13 +564,17 @@ export default function Home() {
         const first = restoredQueue[0];
         queueRef.current = restoredQueue.slice(1);
         setQueued(queueRef.current);
-        window.setTimeout(() => void runJob(first), 0);
+        window.setTimeout(
+          () => void runJob(first, Boolean(first.serverStartedAt)),
+          0,
+        );
       }
     } catch {
       clearSavedWork();
     }
   }, []);
   useEffect(() => {
+    const modelRequest = modelRequestGateRef.current.begin(apiSource);
     if (apiSource === "bfl") {
       setModelOptions(bflModels);
       if (!bflModels.some((item) => item.id === model))
@@ -536,8 +582,16 @@ export default function Home() {
       if (resolution === "4K") setResolution("2K");
       return;
     }
-    const providerModels = apiSource === "apilio" ? apilioModels : cherryModels;
-    const providerKey = apiSource === "apilio" ? apilioApiKey : apiKey;
+    const providerModels = apiSource === "apilio"
+      ? apilioModels
+      : apiSource === "goapi"
+        ? goapiModels
+        : cherryModels;
+    const providerKey = apiSource === "apilio"
+      ? apilioApiKey
+      : apiSource === "goapi"
+        ? goapiApiKey
+        : apiKey;
     setModelOptions(providerModels);
     if (!providerModels.some((item) => item.id === model))
       setModel(preferredModelFor(apiSource, providerModels));
@@ -552,13 +606,15 @@ export default function Home() {
         const data = (await response.json()) as {
           models?: typeof fallbackModels;
         };
+        if (!modelRequestGateRef.current.isCurrent(modelRequest)) return;
         if (response.ok && data.models?.length) {
           if (apiSource === "apilio") setApilioModels(data.models);
+          else if (apiSource === "goapi") setGoapiModels(data.models);
           else setCherryModels(data.models);
-          if (apiSource === "apilio") {
+          if (apiSource === "apilio" || apiSource === "goapi") {
             try {
               localStorage.setItem(
-                "dialogue-studio-apilio-models",
+                apiProvider(apiSource).modelsStorageKey,
                 JSON.stringify(data.models),
               );
             } catch {}
@@ -570,7 +626,7 @@ export default function Home() {
       } catch {}
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [apiKey, apilioApiKey, apiSource]);
+  }, [apiKey, apilioApiKey, goapiApiKey, apiSource]);
   useEffect(() => {
     if (!panel) return;
     const closeOutside = (event: PointerEvent) => {
@@ -733,6 +789,10 @@ export default function Home() {
     setApilioApiKey(value);
     localStorage.setItem("dialogue-studio-apilio-api-key", value);
   }
+  function saveGoapiKey(value: string) {
+    setGoapiApiKey(value);
+    localStorage.setItem(apiProvider("goapi").keyStorageKey, value);
+  }
   function selectApiSource(source: ApiSource) {
     setApiSource(source);
     setSettingsSource(source);
@@ -742,6 +802,8 @@ export default function Home() {
         ? bflModels
         : source === "apilio"
           ? apilioModels
+          : source === "goapi"
+            ? goapiModels
           : cherryModels;
     setModelOptions(nextModels);
     setModel(preferredModelFor(source, nextModels));
@@ -826,12 +888,7 @@ export default function Home() {
     if (caret !== null && value.charAt(caret - 1) === "@") setPanel("mentions");
   }
   function openProviderBalance(source: ApiSource) {
-    const urls: Record<ApiSource, string> = {
-      cherryin: "https://open.cherryin.net/console",
-      bfl: "https://dashboard.bfl.ai",
-      apilio: "https://api.apilio.ai/topup",
-    };
-    window.open(urls[source], "_blank", "noopener,noreferrer");
+    window.open(apiProvider(source).balanceURL, "_blank", "noopener,noreferrer");
   }
   function newChat() {
     setPrompt("");
@@ -1067,6 +1124,8 @@ export default function Home() {
         ? bflApiKey.trim()
         : runApiSource === "apilio"
           ? apilioApiKey.trim()
+          : runApiSource === "goapi"
+            ? goapiApiKey.trim()
           : apiKey.trim();
     if (!runApiKey) {
       setSettingsSource(runApiSource);
@@ -1076,6 +1135,8 @@ export default function Home() {
           ? "请先填写 Black Forest Labs API Key"
           : runApiSource === "apilio"
             ? "请先填写 Apilio API Key"
+            : runApiSource === "goapi"
+              ? "请先填写 GoAPI Key"
             : "请先填写 CherryIN API Key",
       );
       return;
@@ -1136,19 +1197,27 @@ export default function Home() {
       }
     }
     if (processingRef.current) {
-      queueRef.current = [...queueRef.current, job];
+      const prestartedJob = { ...job, serverStartedAt: Date.now() };
+      queueRef.current = [...queueRef.current, prestartedJob];
       setQueued(queueRef.current);
       persistWork(pending, queueRef.current);
+      void createServerJob(prestartedJob, new AbortController().signal).catch(
+        () => {
+          // Its runner will query the same task ID. Never recreate a paid job.
+        },
+      );
       return;
     }
     await runJob(job);
   }
   async function runJob(job: GenerationJob, resume = false) {
     const submittedAt = job.submittedAt || Date.now();
+    let activeJob = job;
     explicitCancelRef.current = false;
     processingRef.current = true;
     setBusy(true);
     setProgress(6);
+    setPendingHidden(false);
     setPartialImages([]);
     setPending(job);
     persistWork(job, queueRef.current);
@@ -1159,7 +1228,12 @@ export default function Home() {
         throw new Error(
           "排队任务的参考图未保存在浏览器中，请重新上传参考图后再生成。",
         );
-      if (!resume) await createServerJob(job, controller.signal);
+      if (!resume && !job.serverStartedAt) {
+        await createServerJob(job, controller.signal);
+        activeJob = { ...job, serverStartedAt: Date.now() };
+        setPending(activeJob);
+        persistWork(activeJob, queueRef.current);
+      }
       const showPartialImages = (images: string[]) =>
         setPartialImages((current) =>
           current.length === images.length &&
@@ -1168,9 +1242,10 @@ export default function Home() {
             : images,
         );
       const data = await waitForServerJob(
-        job.queueId,
+        activeJob.queueId,
         controller.signal,
         showPartialImages,
+        Boolean(activeJob.serverStartedAt),
       );
       if (resume && data.missing)
         throw new Error(
@@ -1178,12 +1253,18 @@ export default function Home() {
         );
       if (data.error) throw new Error(data.error);
       const completedCount = data.images?.length || 0;
+      const timing = generationTiming(
+        submittedAt,
+        activeJob.serverStartedAt,
+        Date.now(),
+      );
       const turn: Turn = {
         id: crypto.randomUUID(),
         prompt: job.prompt || "",
         images: data.images || [],
         createdAt: submittedAt,
-        generationDurationMs: Date.now() - submittedAt,
+        generationDurationMs: timing.generationDurationMs,
+        queueWaitMs: timing.queueWaitMs,
         apiSource: job.apiSource || sourceForModel(job.modelId),
         modelId: job.modelId,
         modelName: job.modelName,
@@ -1218,7 +1299,7 @@ export default function Home() {
         prompt: job.prompt || "",
         images: [],
         createdAt: submittedAt,
-        generationDurationMs: Date.now() - submittedAt,
+        ...generationTiming(submittedAt, activeJob.serverStartedAt, Date.now()),
         apiSource: job.apiSource || sourceForModel(job.modelId),
         modelId: job.modelId,
         modelName: job.modelName,
@@ -1240,6 +1321,7 @@ export default function Home() {
       }
       setBusy(false);
       setProgress(0);
+      setPendingHidden(false);
       setPartialImages([]);
       setPending(null);
       setPreview((current) =>
@@ -1252,7 +1334,10 @@ export default function Home() {
         queueRef.current = queueRef.current.slice(1);
         setQueued(queueRef.current);
         persistWork(next, queueRef.current);
-        window.setTimeout(() => void runJob(next), 0);
+        window.setTimeout(
+          () => void runJob(next, Boolean(next.serverStartedAt)),
+          0,
+        );
       } else clearSavedWork();
     }
   }
@@ -1426,7 +1511,9 @@ export default function Home() {
                     ? "Black Forest Labs"
                     : apiSource === "apilio"
                       ? "Apilio"
-                      : "CherryIN"}
+                      : apiSource === "goapi"
+                        ? "GoAPI"
+                        : "CherryIN"}
                 </small>
               </p>
               {modelOptions.length ? (
@@ -1489,6 +1576,8 @@ export default function Home() {
                 <div className="model-empty">
                   {(apiSource === "apilio"
                     ? apilioApiKey
+                    : apiSource === "goapi"
+                      ? goapiApiKey
                     : apiSource === "bfl"
                       ? bflApiKey
                       : apiKey
@@ -1639,7 +1728,7 @@ export default function Home() {
         </div>
         <span className="tool-spacer" />
         {queued.length > 0 && (
-          <span className="queue-count">排队 {queued.length}</span>
+          <span className="queue-count">后台 {queued.length}</span>
         )}
         <button
           className="send"
@@ -1766,6 +1855,13 @@ export default function Home() {
                 <b>Apilio</b>
                 <small>聚合模型</small>
               </button>
+              <button
+                className={settingsSource === "goapi" ? "chosen" : ""}
+                onClick={() => selectApiSource("goapi")}
+              >
+                <b>GoAPI</b>
+                <small>GPT Image</small>
+              </button>
             </div>
             {settingsSource === "cherryin" ? (
               <>
@@ -1799,7 +1895,7 @@ export default function Home() {
                   onClick={() => openProviderBalance("bfl")}
                 />
               </>
-            ) : (
+            ) : settingsSource === "apilio" ? (
               <>
                 <label>
                   Apilio API Key
@@ -1813,6 +1909,22 @@ export default function Home() {
                 <BalanceLink
                   label="Apilio 钱包余额"
                   onClick={() => openProviderBalance("apilio")}
+                />
+              </>
+            ) : (
+              <>
+                <label>
+                  GoAPI Key
+                  <input
+                    type="password"
+                    value={goapiApiKey}
+                    onChange={(e) => saveGoapiKey(e.target.value)}
+                    placeholder="GoAPI Key"
+                  />
+                </label>
+                <BalanceLink
+                  label="GoAPI 账户余额"
+                  onClick={() => openProviderBalance("goapi")}
                 />
               </>
             )}
@@ -1912,7 +2024,7 @@ export default function Home() {
                 </div>
               </article>
             ))}
-            {busy && pending && (
+            {busy && pending && !pendingHidden && (
               <article className="generation-entry pending-entry">
                 <GenerationHeader
                   turn={pending}
@@ -1949,17 +2061,14 @@ export default function Home() {
                 </div>
                 <div className="result-actions">
                   <button
-                    onClick={() => {
-                      explicitCancelRef.current = true;
-                      abortRef.current?.abort();
-                    }}
+                    onClick={() => setPendingHidden(true)}
                   >
-                    停止生成
+                    隐藏进度（后台继续）
                   </button>
                 </div>
               </article>
             )}
-            {queued.map((job, queueIndex) => (
+            {queued.map((job) => (
               <article
                 className="generation-entry queued-entry"
                 key={job.queueId}
@@ -1971,8 +2080,8 @@ export default function Home() {
                   }
                 />
                 <div className="queued-status">
-                  <strong>等待中</strong>
-                  <span>前面还有 {queueIndex + 1} 个任务</span>
+                  <strong>后台生成中</strong>
+                  <span>已提交，无需等待前一条完成</span>
                 </div>
               </article>
             ))}
@@ -2218,6 +2327,7 @@ function GenerationHeader({
     | "attachments"
     | "apiSource"
     | "generationDurationMs"
+    | "queueWaitMs"
   > & { createdAt?: number };
   onReferenceClick?: (references: Attachment[]) => void;
 }) {
@@ -2281,6 +2391,14 @@ function GenerationHeader({
                 <div className="generation-details">
                   <span>提交时间</span>
                   <strong>{formatGenerationTime(turn.createdAt)}</strong>
+                  {Boolean(turn.queueWaitMs) && (
+                    <>
+                      <span>排队等待</span>
+                      <strong>
+                        {formatGenerationDuration(turn.queueWaitMs)}
+                      </strong>
+                    </>
+                  )}
                   <span>生成用时</span>
                   <strong>
                     {formatGenerationDuration(turn.generationDurationMs)}
@@ -2294,7 +2412,9 @@ function GenerationHeader({
               ? "Black Forest"
               : source === "apilio"
                 ? "Apilio"
-                : "CherryIN"}
+                : source === "goapi"
+                  ? "GoAPI"
+                  : "CherryIN"}
           </span>
         </span>
       </div>
@@ -2443,26 +2563,17 @@ async function waitForServerJob(
   queueId: string,
   signal: AbortSignal,
   onProgress: (images: string[]) => void,
-) {
-  for (;;) {
-    const response = await fetch(`/api/jobs/${encodeURIComponent(queueId)}`, {
-      cache: "no-store",
-      signal,
-    });
-    const data = (await response.json()) as {
-      status?: "running" | "completed" | "failed";
-      images?: string[];
-      references?: Attachment[];
-      error?: string;
-      requestedCount?: number;
-      completedCount?: number;
-    };
-    if (response.status === 404) return { missing: true, error: "" };
-    if (!response.ok) throw new Error(data.error || "无法读取任务状态");
-    onProgress(data.images || []);
-    if (data.status === "completed") return { ...data, missing: false };
-    if (data.status === "failed") throw new Error(data.error || "生成失败");
-    await new Promise<void>((resolve, reject) => {
+  tolerateStartupRace = false,
+): Promise<{
+  missing: boolean;
+  images?: string[];
+  references?: Attachment[];
+  error?: string;
+  requestedCount?: number;
+  completedCount?: number;
+}> {
+  const sleep = () =>
+    new Promise<void>((resolve, reject) => {
       const timer = window.setTimeout(resolve, 1200);
       signal.addEventListener(
         "abort",
@@ -2473,5 +2584,31 @@ async function waitForServerJob(
         { once: true },
       );
     });
-  }
+  const result = await waitForJobStatus({
+    read: async (): Promise<JobStatusSnapshot> => {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(queueId)}`, {
+        cache: "no-store",
+        signal,
+      });
+      const data = (await response.json()) as Omit<JobStatusSnapshot, "status"> & {
+        status?: "running" | "completed" | "failed";
+      };
+      if (response.status === 404) return { status: "missing" };
+      if (!response.ok)
+        throw new Error(data.error || "无法读取任务状态");
+      return { ...data, status: data.status || "running" };
+    },
+    sleep,
+    onProgress,
+    tolerateMissingReads: tolerateStartupRace ? 3 : 0,
+    transientRetryLimit: 8,
+  });
+  if (result.status === "missing") return { missing: true, error: "" };
+  if (result.status === "failed")
+    throw new Error(result.error || "生成失败");
+  return {
+    ...result,
+    missing: false,
+    references: result.references as Attachment[] | undefined,
+  };
 }

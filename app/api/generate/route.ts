@@ -4,6 +4,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { studioPath } from "../../../lib/studio-paths";
 import { persistentTextEditReferences } from "../../../lib/text-edit";
+import { buildImageGenerationPayload } from "../../../lib/image-generation-payload";
+import { apiProvider, type ApiSource } from "../../../lib/api-providers";
+import { providerError } from "../../../lib/provider-error";
+import { providerFetch } from "../../../lib/provider-fetch";
 
 type Reference = { name: string; data: string; transient?: boolean };
 const timeout = 600_000;
@@ -31,7 +35,7 @@ function normalizeGptImage2Size(model: string, size: string | undefined) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as { apiKey?: string; apiSource?: "cherryin" | "apilio" | "bfl"; prompt?: string; model?: string; size?: string; quality?: string; count?: number; references?: Reference[]; archiveReferences?: boolean };
+    const body = await request.json() as { apiKey?: string; apiSource?: ApiSource; prompt?: string; model?: string; size?: string; quality?: string; count?: number; references?: Reference[]; archiveReferences?: boolean };
     const { apiKey, apiSource = "cherryin", prompt, model = "openai/gpt-image-2", size, quality = "medium", count = 1, references = [], archiveReferences = true } = body;
     if (!apiKey?.trim() || !prompt?.trim()) return NextResponse.json({ error: "请填写 API Key 和创作指令。" }, { status: 400 });
     const providerSize = normalizeGptImage2Size(model, size);
@@ -55,8 +59,9 @@ export async function POST(request: NextRequest) {
     // Apilio can finish the upstream generation but fail while proxying a large
     // 2K/4K base64 response. Ask it for a lightweight URL and download the
     // image separately; this avoids retrying the paid generation itself.
-    const baseURL = apiSource === "apilio" ? "https://api.apilio.ai" : "https://open.cherryin.net";
-    const providerName = apiSource === "apilio" ? "Apilio" : "CherryIN";
+    const provider = apiProvider(apiSource);
+    const baseURL = provider.baseURL;
+    const providerName = provider.name;
     // Apilio's GPT Image routes ignore n > 1. Submit one paid generation per
     // requested image so the UI count matches the actual number of results.
     if (apiSource === "apilio" && count > 1) {
@@ -66,7 +71,7 @@ export async function POST(request: NextRequest) {
       const firstError = settled.find((result): result is PromiseRejectedResult => result.status === "rejected")?.reason;
       throw firstError instanceof Error ? firstError : new Error("Apilio 没有返回图片。");
     }
-    const responseFormat = apiSource === "apilio" ? "url" : "b64_json";
+    const responseFormat = apiSource === "apilio" || apiSource === "goapi" ? "url" : "b64_json";
     const images = await requestGeneration(apiKey.trim(), baseURL, providerName, model, prompt, providerSize, quality, count, responseFormat);
     if (!images.length) return NextResponse.json({ error: `${providerName} 没有返回图片。` }, { status: 502 });
     return NextResponse.json({ images });
@@ -79,12 +84,12 @@ export async function POST(request: NextRequest) {
 }
 
 async function requestGeneration(apiKey: string, baseURL: string, providerName: string, model: string, prompt: string, size: string | undefined, quality: string, count: number, responseFormat: "url" | "b64_json") {
-  const payload = { model, prompt, quality, n: count, response_format: responseFormat, ...(size ? { size } : {}) };
-  const response = await fetch(`${baseURL}/v1/images/generations`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(timeout) });
+  const payload = buildImageGenerationPayload({ providerName, model, prompt, size, quality, count, responseFormat });
+  const response = await providerFetch(`${baseURL}/v1/images/generations`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(timeout) }, providerName);
   const text = await response.text();
   let data: Record<string, unknown> = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { message: text }; }
-  if (!response.ok) throw new Error(getError(data, response.status, providerName));
+  if (!response.ok) throw new Error(providerError(data, response.status, providerName));
   const entries = Array.isArray(data.data) ? data.data : Array.isArray(data.images) ? data.images : [];
   return Promise.all(entries.map(normalize));
 }
@@ -173,7 +178,8 @@ async function requestGemini(apiKey: string, model: string, prompt: string, size
   const text = await response.text();
   let data: Record<string, unknown> = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { message: text }; }
-  if (!response.ok) throw new Error(getError(data, response.status));
+  if (!response.ok)
+    throw new Error(providerError(data, response.status, "CherryIN"));
   const candidates = Array.isArray(data.candidates) ? data.candidates as Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string }; inline_data?: { data?: string; mime_type?: string } }> } }> : [];
   const imageParts = candidates.flatMap((candidate) => candidate.content?.parts || []).map((part) => part.inlineData || (part.inline_data ? { data: part.inline_data.data, mimeType: part.inline_data.mime_type } : undefined)).filter((item): item is { data: string; mimeType?: string } => Boolean(item?.data));
   const images = await Promise.all(imageParts.map((item) => saveGeneratedImage(Buffer.from(item.data, "base64"), item.mimeType || "image/png")));
@@ -204,18 +210,19 @@ function geminiImageConfig(size: string | undefined) {
   return { aspectRatio, imageSize };
 }
 
-async function requestEdit(apiKey: string, apiSource: "cherryin" | "apilio" | "bfl", model: string, prompt: string, size: string | undefined, quality: string, references: Reference[]) {
+async function requestEdit(apiKey: string, apiSource: ApiSource, model: string, prompt: string, size: string | undefined, quality: string, references: Reference[]) {
   const form = new FormData();
   form.append("model", model); form.append("prompt", prompt); if (size) form.append("size", size); form.append("quality", quality); form.append("n", "1");
   const files = await Promise.all(references.map(toFile));
   files.forEach((file) => form.append("image", file));
-  const baseURL = apiSource === "apilio" ? "https://api.apilio.ai" : "https://open.cherryin.net";
-  const providerName = apiSource === "apilio" ? "Apilio" : "CherryIN";
-  const response = await fetch(`${baseURL}/v1/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(timeout) });
+  const provider = apiProvider(apiSource);
+  const baseURL = provider.baseURL;
+  const providerName = provider.name;
+  const response = await providerFetch(`${baseURL}/v1/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(timeout) }, providerName);
   const text = await response.text();
   let data: Record<string, unknown> = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { message: text }; }
-  if (!response.ok) throw new Error(getError(data, response.status));
+  if (!response.ok) throw new Error(providerError(data, response.status, providerName));
   const entries = Array.isArray(data.data) ? data.data : Array.isArray(data.images) ? data.images : [];
   const images = await Promise.all(entries.map(normalize));
   if (!images.length) throw new Error(`${providerName} 没有返回图片。`);
@@ -286,15 +293,4 @@ async function saveGeneratedImage(bytes: Buffer, contentType: string) {
   const filename = `${Date.now()}-${randomUUID()}.${extension}`;
   await writeFile(path.join(directory, filename), bytes);
   return `/generated/${filename}`;
-}
-
-function getError(data: Record<string, unknown>, status: number, providerName = "CherryIN") {
-  const nested = data.error as { message?: string } | string | undefined;
-  const detail = typeof nested === "string" ? nested : nested?.message || String(data.message || "");
-  const requestId = detail.match(/request ID\s+([a-zA-Z0-9-]+)/i)?.[1];
-  if (status === 401) return "API Key 无效或已过期。";
-  if (status === 402) return `${providerName} 余额不足。`;
-  if (status === 429) return "请求太频繁，请稍后再试。";
-  if (status >= 500) return `${providerName} 图片服务暂时异常。${requestId ? `请求编号：${requestId}` : "请稍后再试。"}`;
-  return detail || `${providerName} 返回错误 ${status}`;
 }

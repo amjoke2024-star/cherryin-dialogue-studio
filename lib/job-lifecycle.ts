@@ -17,3 +17,15 @@ export function decideJobTermination(input: JobTerminationInput) {
     return { preserveWork: false, recordCancelled: true };
   return { preserveWork: false, recordCancelled: false };
 }
+
+export function generationTiming(
+  submittedAt: number,
+  serverStartedAt: number | undefined,
+  completedAt: number,
+) {
+  const startedAt = serverStartedAt || submittedAt;
+  return {
+    queueWaitMs: Math.max(0, startedAt - submittedAt),
+    generationDurationMs: Math.max(0, completedAt - startedAt),
+  };
+}

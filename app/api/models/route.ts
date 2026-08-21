@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiProvider, type ApiSource } from "../../../lib/api-providers";
 
 type UpstreamModel = {
   id?: string;
@@ -17,10 +18,12 @@ const videoWords = ["i2v", "t2v", "s2v", "kf2v", "video", "animate-mix", "animat
 
 export async function POST(request: NextRequest) {
   try {
-    const { apiKey, apiSource = "cherryin" } = await request.json() as { apiKey?: string; apiSource?: "cherryin" | "apilio" };
+    const { apiKey, apiSource = "cherryin" } = await request.json() as { apiKey?: string; apiSource?: ApiSource };
     if (!apiKey?.trim()) return NextResponse.json({ models: [] });
-    const providerName = apiSource === "apilio" ? "Apilio" : "CherryIN";
-    const baseURL = apiSource === "apilio" ? "https://api.apilio.ai" : "https://open.cherryin.net";
+    if (apiSource === "bfl") return NextResponse.json({ models: [] });
+    const provider = apiProvider(apiSource);
+    const providerName = provider.name;
+    const baseURL = provider.baseURL;
     const response = await fetch(`${baseURL}/v1/models`, {
       headers: { Authorization: `Bearer ${apiKey.trim()}`, Accept: "application/json" },
       cache: "no-store",
