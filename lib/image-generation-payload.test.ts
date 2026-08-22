@@ -87,3 +87,18 @@ test("non-Gemini image models keep the existing OpenAI-compatible payload", () =
     },
   );
 });
+
+test("Apilio routes GPT Image 2 requests with 4K dimensions through its 4K model alias", () => {
+  assert.equal(
+    buildImageGenerationPayload({
+      providerName: "Apilio",
+      model: "gpt-image-2",
+      prompt: "product photo",
+      size: "3520x2336",
+      quality: "high",
+      count: 1,
+      responseFormat: "url",
+    }).model,
+    "gpt-image-2-4k",
+  );
+});

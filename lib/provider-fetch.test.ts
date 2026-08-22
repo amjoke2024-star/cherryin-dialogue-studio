@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  internalGenerationFetchTimeouts,
   providerFetchTimeouts,
   readableFetchError,
 } from "./provider-fetch.ts";
+
+test("internal generation transport keeps long-running jobs open for ten minutes", () => {
+  assert.deepEqual(internalGenerationFetchTimeouts(), {
+    headersTimeout: 600_000,
+    bodyTimeout: 600_000,
+  });
+});
 
 test("Apilio transport waits as long as the existing ten minute generation timeout", () => {
   assert.deepEqual(providerFetchTimeouts("Apilio"), {

@@ -3,6 +3,7 @@ import {
   runGenerationRequests,
   shouldRunGenerationConcurrently,
 } from "../../../lib/generation-scheduler";
+import { internalGenerationFetch } from "../../../lib/provider-fetch";
 import { jobs, pruneJobs, updateRunningJob } from "./store";
 
 export const runtime = "nodejs";
@@ -35,7 +36,7 @@ export async function POST(request: NextRequest) {
       concurrent: shouldRunGenerationConcurrently(body.apiSource),
       execute: async (index) => {
         try {
-          const response = await fetch(generateURL, {
+          const response = await internalGenerationFetch(generateURL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

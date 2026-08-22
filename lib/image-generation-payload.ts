@@ -33,8 +33,9 @@ export function buildImageGenerationPayload({
   count,
   responseFormat,
 }: ImageGenerationPayloadOptions) {
+  const providerModel = resolveProviderImageModel(providerName, model, size);
   const base = {
-    model,
+    model: providerModel,
     prompt,
     n: count,
     response_format: responseFormat,
@@ -47,6 +48,19 @@ export function buildImageGenerationPayload({
   }
 
   return { ...base, quality, ...(size ? { size } : {}) };
+}
+
+export function resolveProviderImageModel(
+  providerName: string,
+  model: string,
+  size: string | undefined,
+) {
+  if (providerName !== "Apilio" || model !== "gpt-image-2") return model;
+  const match = size?.match(/^(\d+)x(\d+)$/);
+  if (!match) return model;
+  return Math.max(Number(match[1]), Number(match[2])) >= 2880
+    ? "gpt-image-2-4k"
+    : model;
 }
 
 function isGeminiImageModel(model: string) {

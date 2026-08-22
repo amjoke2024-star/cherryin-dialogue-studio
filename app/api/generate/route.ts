@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { studioPath } from "../../../lib/studio-paths";
 import { persistentTextEditReferences } from "../../../lib/text-edit";
-import { buildImageGenerationPayload } from "../../../lib/image-generation-payload";
+import { buildImageGenerationPayload, resolveProviderImageModel } from "../../../lib/image-generation-payload";
 import { apiProvider, type ApiSource } from "../../../lib/api-providers";
 import { providerError } from "../../../lib/provider-error";
 import { providerFetch } from "../../../lib/provider-fetch";
@@ -211,13 +211,14 @@ function geminiImageConfig(size: string | undefined) {
 }
 
 async function requestEdit(apiKey: string, apiSource: ApiSource, model: string, prompt: string, size: string | undefined, quality: string, references: Reference[]) {
-  const form = new FormData();
-  form.append("model", model); form.append("prompt", prompt); if (size) form.append("size", size); form.append("quality", quality); form.append("n", "1");
-  const files = await Promise.all(references.map(toFile));
-  files.forEach((file) => form.append("image", file));
   const provider = apiProvider(apiSource);
   const baseURL = provider.baseURL;
   const providerName = provider.name;
+  const providerModel = resolveProviderImageModel(providerName, model, size);
+  const form = new FormData();
+  form.append("model", providerModel); form.append("prompt", prompt); if (size) form.append("size", size); form.append("quality", quality); form.append("n", "1");
+  const files = await Promise.all(references.map(toFile));
+  files.forEach((file) => form.append("image", file));
   const response = await providerFetch(`${baseURL}/v1/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(timeout) }, providerName);
   const text = await response.text();
   let data: Record<string, unknown> = {};

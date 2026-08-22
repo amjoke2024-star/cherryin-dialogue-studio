@@ -2,6 +2,11 @@ import { Agent } from "undici";
 
 const generationTimeout = 600_000;
 const apilioAgent = new Agent(providerFetchTimeouts("Apilio"));
+const internalGenerationAgent = new Agent(internalGenerationFetchTimeouts());
+
+export function internalGenerationFetchTimeouts() {
+  return { headersTimeout: generationTimeout, bodyTimeout: generationTimeout };
+}
 
 export function providerFetchTimeouts(providerName: string) {
   const timeout = providerName === "Apilio" ? generationTimeout : 300_000;
@@ -21,6 +26,16 @@ export async function providerFetch(
   } catch (error) {
     throw new Error(readableFetchError(error, providerName), { cause: error });
   }
+}
+
+export async function internalGenerationFetch(
+  input: string | URL,
+  init: RequestInit,
+) {
+  return fetch(input, {
+    ...init,
+    dispatcher: internalGenerationAgent,
+  } as RequestInit & { dispatcher: Agent });
 }
 
 export function readableFetchError(error: unknown, providerName: string) {
