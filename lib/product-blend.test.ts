@@ -24,6 +24,12 @@ test("unified product blend prompt preserves identity and grounds the product", 
   assert.match(prompt, /承载面材质.*反射/);
   assert.match(prompt, /允许改动.*接触阴影、投影和反射/);
   assert.match(prompt, /禁止出现与环境主光方向矛盾的高光/);
+  assert.match(prompt, /先识别主光方向、光源数量、光线软硬、强弱和衰减/);
+  assert.match(prompt, /环境主色、邻近物体反射色、承载面反弹色和整体冷暖倾向/);
+  assert.match(prompt, /保持合理的明暗与色彩对比/);
+  assert.match(prompt, /多光源、逆光、彩色灯光或室内暖光/);
+  assert.match(prompt, /不得套用固定色调、固定光向/);
+  assert.match(prompt, /环境染色只能表现为表面受光.*不得改变产品固有色/);
   assert.match(prompt, /加强左侧暖光/);
 });
 
