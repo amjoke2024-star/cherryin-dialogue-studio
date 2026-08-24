@@ -16,7 +16,9 @@ import { recognizeImageText, terminateOcr } from "../lib/browser-ocr";
 import { createTextEditGuideImage } from "../lib/text-edit-guide";
 import {
   decideJobTermination,
+  generationCountForMode,
   generationTiming,
+  supportsMultipleImages,
   type StudioMode,
 } from "../lib/job-lifecycle";
 import {
@@ -1265,7 +1267,10 @@ export default function Home() {
       runRatio === "智能"
         ? await intelligentOutputSize(runAttachments, runResolution, runModel)
         : fixedOutputSize(runRatio, runResolution, runModel);
-    const runCount = isTextEdit || isProductBlend ? 1 : repeat?.count || count;
+    const runCount = generationCountForMode(
+      isTextEdit ? "text-edit" : isProductBlend ? "product-blend" : "generate",
+      repeat?.count || count,
+    );
     if (!runPrompt) {
       setError("请输入创作内容");
       return;
@@ -1747,7 +1752,7 @@ export default function Home() {
             className={panel === "format" ? "tool selected" : "tool"}
             onClick={() => setPanel(panel === "format" ? null : "format")}
           >
-            {ratioName} <span>|</span> {resolution} <span>|</span> {studioMode === "generate" ? count : 1}
+            {ratioName} <span>|</span> {resolution} <span>|</span> {supportsMultipleImages(studioMode) ? count : 1}
           </button>
           {panel === "format" && (
             <div className="popover format-popover">
@@ -1804,7 +1809,7 @@ export default function Home() {
                     </button>
                   </div>
                 </div>
-                <div className={studioMode !== "generate" ? "mode-hidden" : ""}>
+                <div className={!supportsMultipleImages(studioMode) ? "mode-hidden" : ""}>
                   <p>生成数量</p>
                   <div className="segments counts">
                     {[1, 2, 3, 4].map((value) => (

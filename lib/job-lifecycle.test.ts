@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   decideJobTermination,
+  generationCountForMode,
   generationTiming,
   normalizeStudioMode,
+  supportsMultipleImages,
 } from "./job-lifecycle.ts";
 
 test("old jobs without a mode remain image generation jobs", () => {
@@ -14,6 +16,15 @@ test("old jobs without a mode remain image generation jobs", () => {
 
 test("product blend is a persisted studio mode", () => {
   assert.equal(normalizeStudioMode("product-blend"), "product-blend");
+});
+
+test("product blend supports the selected image count while text edit stays single", () => {
+  assert.equal(supportsMultipleImages("generate"), true);
+  assert.equal(supportsMultipleImages("product-blend"), true);
+  assert.equal(supportsMultipleImages("text-edit"), false);
+  assert.equal(generationCountForMode("product-blend", 4), 4);
+  assert.equal(generationCountForMode("generate", 3), 3);
+  assert.equal(generationCountForMode("text-edit", 4), 1);
 });
 
 test("page unload preserves the active job without recording cancellation", () => {

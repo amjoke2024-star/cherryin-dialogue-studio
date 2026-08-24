@@ -10,6 +10,16 @@ export function normalizeStudioMode(value: unknown): StudioMode {
   return value === "text-edit" || value === "product-blend" ? value : "generate";
 }
 
+export function supportsMultipleImages(mode: StudioMode) {
+  return mode !== "text-edit";
+}
+
+export function generationCountForMode(mode: StudioMode, requestedCount: number) {
+  return supportsMultipleImages(mode)
+    ? Math.max(1, Math.min(4, Number(requestedCount) || 1))
+    : 1;
+}
+
 export function decideJobTermination(input: JobTerminationInput) {
   if (input.pageUnloading)
     return { preserveWork: true, recordCancelled: false };
