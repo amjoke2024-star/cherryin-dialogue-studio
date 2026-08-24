@@ -24,7 +24,10 @@ import {
   waitForJobStatus,
   type JobStatusSnapshot,
 } from "../lib/job-status-poller";
-import { restorePendingJob } from "../lib/job-recovery";
+import {
+  lightweightSavedJob,
+  restorePendingJob,
+} from "../lib/job-recovery";
 import {
   buildTextEditPrompt,
   hasPendingReplacement,
@@ -2630,42 +2633,25 @@ async function persistServerHistory(items: Turn[]) {
 
 function persistWork(pending: GenerationJob | null, queued: GenerationJob[]) {
   if (!pending && !queued.length) return clearSavedWork();
-  const withoutKey = ({
-    apiKey: _apiKey,
-    ...job
-  }: GenerationJob): SavedGenerationJob => {
-    const attachments = (job.attachments || []).filter((item) =>
-      item.data.startsWith("/generated/"),
-    );
-    return {
-      ...job,
-      attachments,
-      referencesOmitted: Boolean(
-        job.referencesOmitted ||
-        attachments.length !== (job.attachments || []).length,
-      ),
-    };
-  };
   try {
     localStorage.setItem(
       "dialogue-studio-work",
       JSON.stringify({
-        pending: pending ? withoutKey(pending) : undefined,
-        queued: queued.map(withoutKey),
+        pending: pending ? lightweightSavedJob(pending) : undefined,
+        queued: queued.map(lightweightSavedJob),
       }),
     );
   } catch {
     // Keep at least the server job IDs and lightweight metadata when Safari's
     // storage is nearly full, so a refresh can continue polling the jobs.
     try {
-      const minimal = (job: GenerationJob) => {
-        const { apiKey: _apiKey, attachments: _attachments, ...rest } = job;
-        return {
-          ...rest,
-          attachments: [],
-          referencesOmitted: Boolean(job.attachments?.length),
-        };
-      };
+      const minimal = (job: GenerationJob): SavedGenerationJob => ({
+        ...lightweightSavedJob(job),
+        attachments: [],
+        referencesOmitted: Boolean(
+          job.referencesOmitted || job.attachments?.length,
+        ),
+      });
       localStorage.setItem(
         "dialogue-studio-work",
         JSON.stringify({
