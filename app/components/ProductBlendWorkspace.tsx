@@ -72,7 +72,7 @@ export default function ProductBlendWorkspace(props: ProductBlendWorkspaceProps)
 
   const move = (event: ReactPointerEvent<HTMLDivElement>) => {
     const active = interaction.current;
-    if (!active || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    if (!active) return;
     const current = point(event);
     if (active.kind === "draw") {
       props.onBoxChange(normalizeRegion({
