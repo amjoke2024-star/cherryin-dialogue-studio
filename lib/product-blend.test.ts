@@ -19,17 +19,11 @@ test("unified product blend prompt preserves identity and grounds the product", 
   assert.match(prompt, /严格保持产品轮廓、比例、结构、颜色、Logo、包装文字与图案/);
   assert.match(prompt, /定位图.*不得出现在结果中/);
   assert.match(prompt, /接触融合区域/);
-  assert.match(prompt, /接触暗部/);
-  assert.match(prompt, /投影方向.*主光方向一致/);
-  assert.match(prompt, /承载面材质.*反射/);
-  assert.match(prompt, /允许改动.*接触阴影、投影和反射/);
-  assert.match(prompt, /禁止出现与环境主光方向矛盾的高光/);
-  assert.match(prompt, /先识别主光方向、光源数量、光线软硬、强弱和衰减/);
-  assert.match(prompt, /环境主色、邻近物体反射色、承载面反弹色和整体冷暖倾向/);
-  assert.match(prompt, /保持合理的明暗与色彩对比/);
-  assert.match(prompt, /多光源、逆光、彩色灯光或室内暖光/);
-  assert.match(prompt, /不得套用固定色调、固定光向/);
-  assert.match(prompt, /环境染色只能表现为表面受光.*不得改变产品固有色/);
+  assert.match(prompt, /首要任务.*整个产品表面.*亮面、暗面、高光、色温和环境染色/);
+  assert.match(prompt, /必须让产品明显但自然地接受场景光，不能只增加地面阴影/);
+  assert.match(prompt, /根据场景光源和承载面.*接触阴影、投影和必要反射/);
+  assert.ok(prompt.indexOf("首要任务") < prompt.indexOf("接触阴影"));
+  assert.ok(prompt.split("\n").length <= 9);
   assert.match(prompt, /加强左侧暖光/);
 });
 
