@@ -2,7 +2,6 @@
 
 import {
   ChangeEvent,
-  ClipboardEvent as ReactClipboardEvent,
   KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useLayoutEffect,
@@ -28,7 +27,10 @@ import {
   lightweightSavedJob,
   restorePendingJob,
 } from "../lib/job-recovery";
-import { imageIntakeTarget } from "../lib/image-intake";
+import {
+  imageIntakeTarget,
+  installPagePasteListener,
+} from "../lib/image-intake";
 import {
   buildTextEditPrompt,
   hasPendingReplacement,
@@ -1068,7 +1070,10 @@ export default function Home() {
     await addFiles(Array.from(event.target.files || []));
     event.target.value = "";
   }
-  async function pasteImages(event: ReactClipboardEvent<HTMLElement>) {
+  async function pasteImages(event: {
+    clipboardData: DataTransfer;
+    preventDefault(): void;
+  }) {
     const clipboardFiles = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
       .map((item, index) => {
@@ -1136,6 +1141,18 @@ export default function Home() {
       setError("这个网页限制了图片复制，请先将图片存到本地后再拖入画室。");
     }
   }
+  useEffect(
+    () =>
+      installPagePasteListener(document, (event) => {
+        const pasteEvent = event as ClipboardEvent;
+        const clipboardData = pasteEvent.clipboardData;
+        if (clipboardData)
+          void pasteImages({
+            clipboardData,
+            preventDefault: () => pasteEvent.preventDefault(),
+          });
+      }),
+  );
   async function send(repeat?: Turn) {
     const isTextEdit = repeat?.mode === "text-edit" || (!repeat && studioMode === "text-edit");
     const isProductBlend = repeat?.mode === "product-blend" || (!repeat && studioMode === "product-blend");
@@ -1456,7 +1473,6 @@ export default function Home() {
     <div
       ref={composerRef}
       className={dragActive ? "prompt-card dragging-files" : "prompt-card"}
-      onPaste={(event) => void pasteImages(event)}
       onDragEnter={(event) => {
         event.preventDefault();
         setDragActive(true);
