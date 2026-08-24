@@ -19,7 +19,7 @@ test("product blend prompt stays concise while preserving the blend goal", () =>
   const prompt = buildProductBlendPrompt("加强左侧暖光", { hasGuide: true });
   assert.equal(prompt, [
     "第1张图是唯一底图；第2张图仅用于定位产品与接触区域，其颜色不得进入结果。",
-    "将产品自然融入场景，重塑产品光影和接触关系；产品受场景光源及环境光漫反射影响，产生自然的阴影、投影和反射。不改变产品外观，不改变背景。",
+    "将产品自然融入场景，重塑光影和接触关系。产品表面自然反射周围环境色，色调、色温、明暗和景深与场景一致，并产生合理的反弹光、接触阴影及必要倒影，看起来原本就在这个环境中，避免贴图感。不改变产品外观，不改变背景。",
     "用户补充要求：加强左侧暖光",
   ].join("\n"));
 });
