@@ -9,9 +9,8 @@ import { apiProvider, type ApiSource } from "../../../lib/api-providers";
 import { providerError } from "../../../lib/provider-error";
 import { providerFetch } from "../../../lib/provider-fetch";
 import { fetchGeneratedImage } from "../../../lib/generated-image-download";
-import { appendEditReferenceFiles, type EditReference } from "../../../lib/edit-request";
 
-type Reference = EditReference;
+type Reference = { name: string; data: string; transient?: boolean };
 const timeout = 600_000;
 const geminiTimeout = 600_000;
 const bflTimeout = 600_000;
@@ -219,7 +218,8 @@ async function requestEdit(apiKey: string, apiSource: ApiSource, model: string, 
   const providerModel = resolveProviderImageModel(providerName, model, size);
   const form = new FormData();
   form.append("model", providerModel); form.append("prompt", prompt); if (size) form.append("size", size); form.append("quality", quality); form.append("n", "1");
-  await appendEditReferenceFiles(form, references, toFile);
+  const files = await Promise.all(references.map(toFile));
+  files.forEach((file) => form.append("image", file));
   const response = await providerFetch(`${baseURL}/v1/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(timeout) }, providerName);
   const text = await response.text();
   let data: Record<string, unknown> = {};

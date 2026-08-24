@@ -34,7 +34,7 @@ import {
   type NormalizedBox,
   type TextRegion,
 } from "../lib/text-edit";
-import { createProductBlendMaskImage } from "../lib/product-blend-guide";
+import { createProductBlendGuideImage } from "../lib/product-blend-guide";
 import {
   isValidProductBox,
   prepareProductBlendInput,
@@ -48,7 +48,7 @@ import {
   type ApiSource,
 } from "../lib/api-providers";
 
-type Attachment = { name: string; data: string; transient?: boolean; role?: "mask" };
+type Attachment = { name: string; data: string; transient?: boolean };
 type TextEditState = { sourceImage: Attachment; regions: TextRegion[] };
 type Turn = {
   id: string;
@@ -1175,15 +1175,15 @@ export default function Home() {
     }
     if (isProductBlend) {
       try {
-        const maskImage = await createProductBlendMaskImage(
+        const guideImage = await createProductBlendGuideImage(
           productBlendState!.sourceImage.data,
           productBlendState!.productBox,
         );
-        const prepared = prepareProductBlendInput(productBlendState!, maskImage);
+        const prepared = prepareProductBlendInput(productBlendState!, guideImage);
         runPrompt = prepared.prompt;
         runAttachments = prepared.references;
       } catch (guideError) {
-        setError(guideError instanceof Error ? guideError.message : "产品编辑蒙版生成失败，请重新上传图片");
+        setError(guideError instanceof Error ? guideError.message : "产品定位图生成失败，请重新上传图片");
         return;
       }
     }
