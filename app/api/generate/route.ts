@@ -9,6 +9,7 @@ import { apiProvider, type ApiSource } from "../../../lib/api-providers";
 import { providerError } from "../../../lib/provider-error";
 import { providerFetch } from "../../../lib/provider-fetch";
 import { fetchGeneratedImage } from "../../../lib/generated-image-download";
+import { providerRequestId, readProviderResponseText } from "../../../lib/provider-response";
 
 type Reference = { name: string; data: string; transient?: boolean };
 const timeout = 600_000;
@@ -220,11 +221,29 @@ async function requestEdit(apiKey: string, apiSource: ApiSource, model: string, 
   form.append("model", providerModel); form.append("prompt", prompt); if (size) form.append("size", size); form.append("quality", quality); form.append("n", "1");
   const files = await Promise.all(references.map(toFile));
   files.forEach((file) => form.append("image", file));
-  const response = await providerFetch(`${baseURL}/v1/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(timeout) }, providerName);
-  const text = await response.text();
+  const requestStartedAt = Date.now();
+  let response: Response;
+  try {
+    response = await providerFetch(`${baseURL}/v1/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(timeout) }, providerName);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "未知错误";
+    throw new Error(`${providerName} 图片编辑等待响应头失败（模型 ${providerModel}，尺寸 ${size || "未指定"}，已等待 ${Date.now() - requestStartedAt}ms）：${detail}`, { cause: error });
+  }
+  const headersElapsedMs = Date.now() - requestStartedAt;
+  const text = await readProviderResponseText(response, {
+    providerName,
+    operation: "图片编辑",
+    model: providerModel,
+    size,
+    headersElapsedMs,
+  });
   let data: Record<string, unknown> = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { message: text }; }
-  if (!response.ok) throw new Error(providerError(data, response.status, providerName));
+  if (!response.ok) {
+    const message = providerError(data, response.status, providerName);
+    const requestId = providerRequestId(response.headers);
+    throw new Error(requestId && !message.includes(requestId) ? `${message} 请求编号：${requestId}` : message);
+  }
   const entries = Array.isArray(data.data) ? data.data : Array.isArray(data.images) ? data.images : [];
   const images = await Promise.all(entries.map(normalize));
   if (!images.length) throw new Error(`${providerName} 没有返回图片。`);
