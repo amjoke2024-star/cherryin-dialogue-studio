@@ -28,11 +28,17 @@ test("unified product blend prompt requires visible relighting on the product it
   assert.match(prompt, /仅增加地面阴影.*失败/);
   assert.match(prompt, /首要任务.*整个产品表面.*亮面、暗面、高光、色温和环境染色/);
   assert.match(prompt, /环境光影响必须清晰可见且自然/);
-  assert.match(prompt, /符合产品曲面和主光方向的连续明暗与冷暖变化/);
+  assert.match(prompt, /先判断背景属于方向光还是漫射光/);
+  assert.match(prompt, /主光明确时.*符合产品曲面和光向的连续明暗与冷暖变化/);
+  assert.match(prompt, /漫射场景.*不虚构强方向光/);
   assert.match(prompt, /不得仅通过整体压暗或提亮产品来表现融合/);
   assert.match(prompt, /受光面.*场景主光色/);
   assert.match(prompt, /暗面和底部.*环境色与承载面反弹光/);
-  assert.match(prompt, /投影方向必须与主光方向一致/);
+  assert.match(prompt, /环境色只作用于合理的暗面、背光边缘和反射面/);
+  assert.match(prompt, /不得给整个产品统一染色/);
+  assert.match(prompt, /受光面.*保持产品原有的中性基色和材质通透感/);
+  assert.match(prompt, /主光明确时，投影方向必须与主光方向一致/);
+  assert.match(prompt, /漫射光下只生成紧凑的接触阴影、环境遮蔽和轻微地面反射/);
   assert.match(prompt, /接触处最深.*向外自然变软变淡/);
   assert.match(prompt, /随承载面的高度、凹凸和遮挡关系变形/);
   assert.match(prompt, /不得形成均匀黑边或悬浮感/);
@@ -47,7 +53,7 @@ test("unified product blend prompt requires visible relighting on the product it
 test("product blend keeps environmental relighting clean and continuous", () => {
   const prompt = buildProductBlendPrompt("", { hasGuide: true });
   assert.match(prompt, /清晰可见且自然/);
-  assert.match(prompt, /符合产品曲面和主光方向的连续明暗与冷暖变化/);
+  assert.match(prompt, /先判断背景属于方向光还是漫射光/);
   assert.match(prompt, /不得形成污渍、云斑、块状染色、颗粒、噪点或不规则涂抹/);
   assert.match(prompt, /保持背景原有的平滑渐变与干净表面，不增加任何纹理/);
   assert.match(prompt, /白色、黑色和金属表面.*高光与反射.*服从场景光源/);
