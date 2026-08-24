@@ -7,6 +7,7 @@ import {
   prepareProductBlendInput,
   productBlendContactGeometry,
   productBlendGuideGeometry,
+  productBlendGuideLayers,
 } from "./product-blend.ts";
 
 test("product selection needs at least one percent on both axes", () => {
@@ -25,9 +26,23 @@ test("unified product blend prompt preserves identity and grounds the product", 
   assert.match(prompt, /首要任务.*整个产品表面.*亮面、暗面、高光、色温和环境染色/);
   assert.match(prompt, /必须让产品明显但自然地接受场景光，不能只增加地面阴影/);
   assert.match(prompt, /根据场景光源和承载面.*接触阴影、投影和必要反射/);
+  assert.match(prompt, /消除.*视觉接缝/);
+  assert.match(prompt, /提升整体环境融合度/);
+  assert.match(prompt, /不要改变.*风格/);
   assert.ok(prompt.indexOf("首要任务") < prompt.indexOf("接触阴影"));
   assert.ok(prompt.split("\n").length <= 9);
   assert.match(prompt, /加强左侧暖光/);
+});
+
+test("location guide uses solid semantic regions instead of source-image pixels", () => {
+  assert.deepEqual(
+    productBlendGuideLayers({ x: 0.2, y: 0.2, width: 0.4, height: 0.5 }, 1000, 1000),
+    [
+      { role: "background", x: 0, y: 0, width: 1000, height: 1000, color: "#050607" },
+      { role: "contact", x: 100, y: 640, width: 600, height: 285, color: "#6b7280" },
+      { role: "product", x: 200, y: 200, width: 400, height: 500, color: "#ffffff" },
+    ],
+  );
 });
 
 test("guide references are not persisted", () => {
