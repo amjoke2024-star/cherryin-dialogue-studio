@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { studioPath } from "../../../lib/studio-paths";
-import { persistentTextEditReferences } from "../../../lib/text-edit";
+import { persistentProductBlendReferences } from "../../../lib/product-blend";
 import { buildImageGenerationPayload, resolveProviderImageModel } from "../../../lib/image-generation-payload";
 import { apiProvider, type ApiSource } from "../../../lib/api-providers";
 import { providerError } from "../../../lib/provider-error";
@@ -251,7 +251,7 @@ async function saveReference(item: Reference): Promise<Reference> {
 
 async function archivePersistentReferences(references: Reference[]) {
   return Promise.all(
-    persistentTextEditReferences(references).map(saveReference),
+    persistentProductBlendReferences(references).map(saveReference),
   );
 }
 

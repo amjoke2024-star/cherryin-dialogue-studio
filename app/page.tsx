@@ -10,7 +10,9 @@ import {
   useState,
 } from "react";
 import "./model-grid.css";
+import "./product-blend.css";
 import TextEditWorkspace from "./components/TextEditWorkspace";
+import ProductBlendWorkspace from "./components/ProductBlendWorkspace";
 import { recognizeImageText, terminateOcr } from "../lib/browser-ocr";
 import { createTextEditGuideImage } from "../lib/text-edit-guide";
 import {
@@ -29,8 +31,18 @@ import {
   preferredTextEditSource,
   shouldCollapseTextEditWorkspace,
   shouldDismissTextEditWorkspace,
+  type NormalizedBox,
   type TextRegion,
 } from "../lib/text-edit";
+import { createProductBlendGuideImage } from "../lib/product-blend-guide";
+import {
+  isValidProductBox,
+  prepareProductBlendInput,
+  shouldCollapseProductBlendWorkspace,
+  type ProductBlendState,
+  type ProductBlendStep,
+  type ProductBlendStyle,
+} from "../lib/product-blend";
 import {
   apiProvider,
   apiProviderModels,
@@ -59,6 +71,7 @@ type Turn = {
   error?: string;
   mode?: StudioMode;
   textEdit?: TextEditState;
+  productBlend?: ProductBlendState;
 };
 type GenerationJob = Omit<
   Turn,
@@ -334,6 +347,12 @@ export default function Home() {
   const [recognizingText, setRecognizingText] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [textEditWorkspaceExpanded, setTextEditWorkspaceExpanded] = useState(true);
+  const [productBlendImage, setProductBlendImage] = useState<Attachment | null>(null);
+  const [productBlendBox, setProductBlendBox] = useState<NormalizedBox | null>(null);
+  const [productBlendStep, setProductBlendStep] = useState<ProductBlendStep>("select-region");
+  const [productBlendStyle, setProductBlendStyle] = useState<ProductBlendStyle | null>(null);
+  const [productBlendPrompt, setProductBlendPrompt] = useState("");
+  const [productBlendWorkspaceExpanded, setProductBlendWorkspaceExpanded] = useState(true);
   const [modelOptions, setModelOptions] = useState(fallbackModels);
   const [model, setModel] = useState(fallbackModels[0].id);
   const [expandedModelVendors, setExpandedModelVendors] = useState<
@@ -900,6 +919,12 @@ export default function Home() {
     setRecognizingText(false);
     setOcrProgress(0);
     setTextEditWorkspaceExpanded(true);
+    setProductBlendImage(null);
+    setProductBlendBox(null);
+    setProductBlendStep("select-region");
+    setProductBlendStyle(null);
+    setProductBlendPrompt("");
+    setProductBlendWorkspaceExpanded(true);
     setError("");
     setPanel(null);
   }
@@ -916,6 +941,17 @@ export default function Home() {
     if (fileInput.current) fileInput.current.value = "";
   }
 
+  function resetProductBlendDraft() {
+    setProductBlendImage(null);
+    setProductBlendBox(null);
+    setProductBlendStep("select-region");
+    setProductBlendStyle(null);
+    setProductBlendPrompt("");
+    setProductBlendWorkspaceExpanded(true);
+    setError("");
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
   function switchStudioMode(next: StudioMode) {
     setStudioMode(next);
     setPanel(null);
@@ -924,13 +960,18 @@ export default function Home() {
       const source = preferredTextEditSource(textEditImage, attachments);
       if (source && !textEditImage) void recognizeTextEditSource(source);
     }
-    if (next === "text-edit" && apiSource === "bfl") {
+    if (next === "product-blend") {
+      const source = productBlendImage || attachments[0] || textEditImage;
+      if (source && !productBlendImage) setProductBlendImage(source);
+      setProductBlendWorkspaceExpanded(true);
+    }
+    if ((next === "text-edit" || next === "product-blend") && apiSource === "bfl") {
       const nextSource: ApiSource = apilioApiKey.trim() ? "apilio" : "cherryin";
       setApiSource(nextSource);
       const options = nextSource === "apilio" ? apilioModels : cherryModels;
       setModelOptions(options);
       setModel(initialDefaultModels[nextSource]);
-    } else if (next === "text-edit" && !isGptImage2(model)) {
+    } else if ((next === "text-edit" || next === "product-blend") && !isGptImage2(model)) {
       setModel(initialDefaultModels[apiSource]);
     }
   }
@@ -964,6 +1005,15 @@ export default function Home() {
     const image = { name: file.name, data: await readFile(file) };
     await recognizeTextEditSource(image);
   }
+  async function setProductBlendSource(file: File) {
+    setProductBlendImage({ name: file.name, data: await readFile(file) });
+    setProductBlendBox(null);
+    setProductBlendStep("select-region");
+    setProductBlendStyle(null);
+    setProductBlendPrompt("");
+    setProductBlendWorkspaceExpanded(true);
+    setError("");
+  }
   function deleteTurn(id: string) {
     setTurns((current) => {
       const next = current.filter((turn) => turn.id !== id);
@@ -986,6 +1036,15 @@ export default function Home() {
         return;
       }
       await setTextEditSource(file);
+      return;
+    }
+    if (studioMode === "product-blend") {
+      const file = incoming.find((item) => item.type.startsWith("image/"));
+      if (!file) {
+        setError("请拖入 PNG、JPEG 或 WebP 图片");
+        return;
+      }
+      await setProductBlendSource(file);
       return;
     }
     const files = incoming
@@ -1079,13 +1138,36 @@ export default function Home() {
   }
   async function send(repeat?: Turn) {
     const isTextEdit = repeat?.mode === "text-edit" || (!repeat && studioMode === "text-edit");
+    const isProductBlend = repeat?.mode === "product-blend" || (!repeat && studioMode === "product-blend");
     const textEditState = repeat?.textEdit || (textEditImage ? { sourceImage: textEditImage, regions: textRegions } : undefined);
+    const productBlendState = repeat?.productBlend || (
+      productBlendImage && productBlendBox && productBlendStyle
+        ? {
+            sourceImage: productBlendImage,
+            productBox: productBlendBox,
+            blendStyle: productBlendStyle,
+            additionalPrompt: productBlendPrompt,
+          }
+        : undefined
+    );
     if (isTextEdit && !textEditState) {
       setError("请先上传需要改字的图片");
       return;
     }
     if (isTextEdit && !hasPendingReplacement(textEditState?.regions || [])) {
       setError("请至少填写一处要替换的新文字");
+      return;
+    }
+    if (isProductBlend && !productBlendImage && !repeat?.productBlend) {
+      setError("请先上传需要溶图的产品场景图");
+      return;
+    }
+    if (isProductBlend && !isValidProductBox(productBlendState?.productBox || null)) {
+      setError("请框选图片中的产品区域");
+      return;
+    }
+    if (isProductBlend && !productBlendState?.blendStyle) {
+      setError("请选择真实校光或视觉优先");
       return;
     }
     let runPrompt = repeat?.prompt || prompt.trim();
@@ -1106,14 +1188,32 @@ export default function Home() {
         return;
       }
     }
+    if (isProductBlend) {
+      try {
+        const guideImage = await createProductBlendGuideImage(
+          productBlendState!.sourceImage.data,
+          productBlendState!.productBox,
+        );
+        const prepared = prepareProductBlendInput(productBlendState!, guideImage);
+        runPrompt = prepared.prompt;
+        runAttachments = prepared.references;
+      } catch (guideError) {
+        setError(guideError instanceof Error ? guideError.message : "产品定位图生成失败，请重新上传图片");
+        return;
+      }
+    }
     const requestedModel = repeat?.modelId || model;
-    const runModel = isTextEdit && !isGptImage2(requestedModel)
+    const runModel = (isTextEdit || isProductBlend) && !isGptImage2(requestedModel)
       ? initialDefaultModels[apiSource === "bfl" ? "cherryin" : apiSource]
       : requestedModel;
     const runApiSource =
       repeat?.apiSource || (repeat ? sourceForModel(runModel) : apiSource);
-    const runModelName = repeat?.modelName || activeModel.name;
-    const runRatio = repeat?.ratioName || ratioName;
+    const runModelName = repeat?.modelName || (
+      runModel === requestedModel
+        ? activeModel.name
+        : (modelOptions.find((item) => item.id === runModel)?.name || "GPT Image 2")
+    );
+    const runRatio = isProductBlend ? "智能" : repeat?.ratioName || ratioName;
     const requestedResolution = repeat?.resolution || resolution;
     const runResolution =
       isBflModel(runModel) && requestedResolution === "4K"
@@ -1153,7 +1253,7 @@ export default function Home() {
       runRatio === "智能"
         ? await intelligentOutputSize(runAttachments, runResolution, runModel)
         : fixedOutputSize(runRatio, runResolution, runModel);
-    const runCount = isTextEdit ? 1 : repeat?.count || count;
+    const runCount = isTextEdit || isProductBlend ? 1 : repeat?.count || count;
     if (!runPrompt) {
       setError("请输入创作内容");
       return;
@@ -1182,13 +1282,17 @@ export default function Home() {
       count: runCount,
       attachments: runAttachments,
       submittedAt: Date.now(),
-      mode: isTextEdit ? "text-edit" : "generate",
+      mode: isTextEdit ? "text-edit" : isProductBlend ? "product-blend" : "generate",
       textEdit: isTextEdit ? textEditState : undefined,
+      productBlend: isProductBlend ? productBlendState : undefined,
     };
     setError("");
     setPanel(null);
     if (shouldCollapseTextEditWorkspace(isTextEdit, Boolean(repeat))) {
       setTextEditWorkspaceExpanded(false);
+    }
+    if (shouldCollapseProductBlendWorkspace(isProductBlend, Boolean(repeat))) {
+      setProductBlendWorkspaceExpanded(false);
     }
     if (!repeat) {
       if (studioMode === "generate") {
@@ -1278,6 +1382,10 @@ export default function Home() {
           ...job.textEdit,
           sourceImage: data.references?.[0] || job.textEdit.sourceImage,
         } : undefined,
+        productBlend: job.productBlend ? {
+          ...job.productBlend,
+          sourceImage: data.references?.[0] || job.productBlend.sourceImage,
+        } : undefined,
       };
       setTurns((current) => persistHistory([...current, turn]));
       if (completedCount < (job.count || 1))
@@ -1310,6 +1418,7 @@ export default function Home() {
         attachments: persistentTextEditReferences(job.attachments || []),
         mode: job.mode,
         textEdit: job.textEdit,
+        productBlend: job.productBlend,
         status: termination.recordCancelled ? "cancelled" : "failed",
         error: termination.recordCancelled ? undefined : message,
       };
@@ -1373,14 +1482,14 @@ export default function Home() {
     >
       {dragActive && (
         <div className="drop-overlay">
-          <strong>{studioMode === "text-edit" ? "松开即可识别文字" : "松开即可批量上传"}</strong>
-          <span>{studioMode === "text-edit" ? "支持 PNG、JPEG、WebP · 每次 1 张" : "支持 PNG、JPEG、WebP · 最多 5 张"}</span>
+          <strong>{studioMode === "text-edit" ? "松开即可识别文字" : studioMode === "product-blend" ? "松开即可框选产品" : "松开即可批量上传"}</strong>
+          <span>{studioMode === "generate" ? "支持 PNG、JPEG、WebP · 最多 5 张" : "支持 PNG、JPEG、WebP · 每次 1 张"}</span>
         </div>
       )}
       <div className="prompt-top">
         <button
           className={
-            (studioMode === "text-edit" ? textEditImage : attachments.length)
+            (studioMode === "text-edit" ? textEditImage : studioMode === "product-blend" ? productBlendImage : attachments.length)
               ? "upload-tile has-image"
               : "upload-tile"
           }
@@ -1390,6 +1499,13 @@ export default function Home() {
             <>
               <span className="upload-stack">
                 <img src={textEditImage.data} alt={textEditImage.name} />
+              </span>
+              <b>↻</b>
+            </>
+          ) : studioMode === "product-blend" && productBlendImage ? (
+            <>
+              <span className="upload-stack">
+                <img src={productBlendImage.data} alt={productBlendImage.name} />
               </span>
               <b>↻</b>
             </>
@@ -1422,7 +1538,7 @@ export default function Home() {
             placeholder="上传参考图、输入文字，描述你想生成的图片。"
             rows={3}
           />
-        ) : (
+        ) : studioMode === "text-edit" ? (
           <div className="text-edit-intro">
             <strong>{textEditImage ? textEditWorkspaceExpanded ? "选择图片中的文字" : "图片改字任务已提交" : "上传一张需要改字的图片"}</strong>
             <span>{textEditImage ? textEditWorkspaceExpanded ? "识别在本机完成。点击文字框后，只需填写改成什么。" : "编辑内容已收起，可在下方查看当前任务进度。" : "程序会在本机识别文字，不消耗 Image 2 额度。"}</span>
@@ -1434,6 +1550,14 @@ export default function Home() {
               >
                 展开编辑内容
               </button>
+            )}
+          </div>
+        ) : (
+          <div className="text-edit-intro">
+            <strong>{productBlendImage ? productBlendWorkspaceExpanded ? "框选图片中的产品" : "产品溶图任务已提交" : "上传一张需要溶图的产品场景图"}</strong>
+            <span>{productBlendImage ? productBlendWorkspaceExpanded ? "框选产品后，选择真实校光或视觉优先。" : "溶图设置已收起，可在下方查看当前任务进度。" : "程序会根据背景光影重新融合产品。"}</span>
+            {productBlendImage && !productBlendWorkspaceExpanded && (
+              <button type="button" className="text-edit-expand" onClick={() => setProductBlendWorkspaceExpanded(true)}>展开溶图设置</button>
             )}
           </div>
         )}
@@ -1482,6 +1606,22 @@ export default function Home() {
           onRegionsChange={setTextRegions}
         />
       )}
+      {studioMode === "product-blend" && productBlendImage && productBlendWorkspaceExpanded && (
+        <ProductBlendWorkspace
+          image={productBlendImage}
+          box={productBlendBox}
+          step={productBlendStep}
+          style={productBlendStyle}
+          additionalPrompt={productBlendPrompt}
+          busy={busy}
+          onBoxChange={setProductBlendBox}
+          onStepChange={setProductBlendStep}
+          onStyleChange={setProductBlendStyle}
+          onAdditionalPromptChange={setProductBlendPrompt}
+          onBack={resetProductBlendDraft}
+          onSubmit={() => void send()}
+        />
+      )}
       <div className="prompt-tools">
         <button
           className={studioMode === "generate" ? "tool active" : "tool"}
@@ -1494,6 +1634,12 @@ export default function Home() {
           onClick={() => switchStudioMode("text-edit")}
         >
           图片改字
+        </button>
+        <button
+          className={studioMode === "product-blend" ? "tool active" : "tool"}
+          onClick={() => switchStudioMode("product-blend")}
+        >
+          产品溶图
         </button>
         <div className="popover-anchor" data-floating-panel>
           <button
@@ -1594,7 +1740,7 @@ export default function Home() {
             className={panel === "format" ? "tool selected" : "tool"}
             onClick={() => setPanel(panel === "format" ? null : "format")}
           >
-            {ratioName} <span>|</span> {resolution} <span>|</span> {studioMode === "text-edit" ? 1 : count}
+            {ratioName} <span>|</span> {resolution} <span>|</span> {studioMode === "generate" ? count : 1}
           </button>
           {panel === "format" && (
             <div className="popover format-popover">
@@ -1651,7 +1797,7 @@ export default function Home() {
                     </button>
                   </div>
                 </div>
-                <div className={studioMode === "text-edit" ? "mode-hidden" : ""}>
+                <div className={studioMode !== "generate" ? "mode-hidden" : ""}>
                   <p>生成数量</p>
                   <div className="segments counts">
                     {[1, 2, 3, 4].map((value) => (
@@ -1669,7 +1815,7 @@ export default function Home() {
             </div>
           )}
         </div>
-        <div className={studioMode === "text-edit" ? "tooltip-anchor mode-hidden" : "tooltip-anchor"}>
+        <div className={studioMode !== "generate" ? "tooltip-anchor mode-hidden" : "tooltip-anchor"}>
           <button
             className="tool icon-tool"
             aria-label="文字效果增强"
@@ -1679,7 +1825,7 @@ export default function Home() {
           </button>
           <span className="tool-tooltip">文字效果增强</span>
         </div>
-        <div className={studioMode === "text-edit" ? "popover-anchor mode-hidden" : "popover-anchor"} data-floating-panel>
+        <div className={studioMode !== "generate" ? "popover-anchor mode-hidden" : "popover-anchor"} data-floating-panel>
           <button
             className={
               panel === "mentions"
@@ -1732,8 +1878,8 @@ export default function Home() {
         )}
         <button
           className="send"
-          disabled={studioMode === "text-edit" && (recognizingText || !textEditImage || !hasPendingReplacement(textRegions))}
-          aria-label={busy ? "加入生成队列" : studioMode === "text-edit" ? "开始改字" : "开始生成"}
+          disabled={(studioMode === "text-edit" && (recognizingText || !textEditImage || !hasPendingReplacement(textRegions))) || (studioMode === "product-blend" && (!productBlendImage || !isValidProductBox(productBlendBox) || !productBlendStyle))}
+          aria-label={busy ? "加入生成队列" : studioMode === "text-edit" ? "开始改字" : studioMode === "product-blend" ? "开始溶图" : "开始生成"}
           onClick={() => void send()}
         >
           <span aria-hidden>↑</span>
@@ -1997,12 +2143,27 @@ export default function Home() {
                         window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
                         return;
                       }
+                      if (turn.mode === "product-blend" && turn.productBlend) {
+                        const sourceImage = turn.images[0]
+                          ? { name: `继续溶图-${turn.productBlend.sourceImage.name}`, data: turn.images[0] }
+                          : turn.productBlend.sourceImage;
+                        setStudioMode("product-blend");
+                        setProductBlendImage(sourceImage);
+                        setProductBlendBox(turn.productBlend.productBox);
+                        setProductBlendStyle(turn.productBlend.blendStyle);
+                        setProductBlendPrompt(turn.productBlend.additionalPrompt);
+                        setProductBlendStep("choose-style");
+                        setProductBlendWorkspaceExpanded(true);
+                        setError("");
+                        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+                        return;
+                      }
                       setPrompt(turn.prompt);
                       setAttachments(turn.attachments || []);
                       promptInput.current?.focus();
                     }}
                   >
-                    {turn.mode === "text-edit" ? "继续改字" : "重新编辑"}
+                    {turn.mode === "text-edit" ? "继续改字" : turn.mode === "product-blend" ? "继续溶图" : "重新编辑"}
                   </button>
                   <button onClick={() => void send(turn)}>再次生成</button>
                   <div className="result-menu-anchor" data-result-menu>
@@ -2455,6 +2616,9 @@ function persistHistory(items: Turn[]) {
     ),
     textEdit: turn.textEdit?.sourceImage.data.startsWith("/generated/")
       ? turn.textEdit
+      : undefined,
+    productBlend: turn.productBlend?.sourceImage.data.startsWith("/generated/")
+      ? turn.productBlend
       : undefined,
   }));
   while (storable.length) {
