@@ -1,3 +1,6 @@
+import { createPersistentJobStore } from "../../../lib/persistent-job-store";
+import { studioPath } from "../../../lib/studio-paths";
+
 export type JobResult = {
   images?: string[];
   references?: Array<{ name: string; data: string }>;
@@ -14,9 +17,13 @@ export type StoredJob = {
   result?: JobResult;
 };
 
-const globalJobs = globalThis as typeof globalThis & { dialogueStudioJobs?: Map<string, StoredJob> };
+const globalJobs = globalThis as typeof globalThis & {
+  dialogueStudioJobs?: ReturnType<typeof createPersistentJobStore>;
+};
 
-export const jobs = globalJobs.dialogueStudioJobs ??= new Map<string, StoredJob>();
+export const jobs = globalJobs.dialogueStudioJobs ??= createPersistentJobStore(
+  studioPath("data", "jobs.json"),
+);
 
 export function updateRunningJob(jobId: string, update: { image?: string; references?: Array<{ name: string; data: string }>; error?: string }) {
   const current = jobs.get(jobId);

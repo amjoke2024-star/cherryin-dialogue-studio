@@ -24,6 +24,7 @@ import {
   waitForJobStatus,
   type JobStatusSnapshot,
 } from "../lib/job-status-poller";
+import { restorePendingJob } from "../lib/job-recovery";
 import {
   buildTextEditPrompt,
   hasPendingReplacement,
@@ -570,9 +571,10 @@ export default function Home() {
           : isBflModel(saved?.pending?.modelId)
             ? restoredBflKey
             : restoredKey;
-      if (saved?.pending && pendingKey) {
+      const restoredPending = restorePendingJob(saved?.pending, pendingKey);
+      if (restoredPending) {
         window.setTimeout(
-          () => void runJob({ ...saved.pending!, apiKey: pendingKey }, true),
+          () => void runJob(restoredPending, true),
           0,
         );
       } else if (restoredQueue.length && restoredQueue[0].apiKey) {
