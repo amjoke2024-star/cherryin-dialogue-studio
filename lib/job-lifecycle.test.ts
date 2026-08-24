@@ -12,6 +12,10 @@ test("old jobs without a mode remain image generation jobs", () => {
   assert.equal(normalizeStudioMode("unknown"), "generate");
 });
 
+test("product blend is a persisted studio mode", () => {
+  assert.equal(normalizeStudioMode("product-blend"), "product-blend");
+});
+
 test("page unload preserves the active job without recording cancellation", () => {
   assert.deepEqual(
     decideJobTermination({

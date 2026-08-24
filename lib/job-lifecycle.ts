@@ -4,10 +4,10 @@ export type JobTerminationInput = {
   explicitCancel: boolean;
 };
 
-export type StudioMode = "generate" | "text-edit";
+export type StudioMode = "generate" | "text-edit" | "product-blend";
 
 export function normalizeStudioMode(value: unknown): StudioMode {
-  return value === "text-edit" ? "text-edit" : "generate";
+  return value === "text-edit" || value === "product-blend" ? value : "generate";
 }
 
 export function decideJobTermination(input: JobTerminationInput) {
