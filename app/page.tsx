@@ -28,6 +28,7 @@ import {
   lightweightSavedJob,
   restorePendingJob,
 } from "../lib/job-recovery";
+import { imageIntakeTarget } from "../lib/image-intake";
 import {
   buildTextEditPrompt,
   hasPendingReplacement,
@@ -1024,7 +1025,8 @@ export default function Home() {
     setRecentMenu(null);
   }
   async function addFiles(incoming: File[]) {
-    if (studioMode === "text-edit") {
+    const target = imageIntakeTarget(studioMode);
+    if (target === "text-edit") {
       const file = incoming.find((item) => item.type.startsWith("image/"));
       if (!file) {
         setError("请拖入 PNG、JPEG 或 WebP 图片");
@@ -1033,7 +1035,7 @@ export default function Home() {
       await setTextEditSource(file);
       return;
     }
-    if (studioMode === "product-blend") {
+    if (target === "product-blend") {
       const file = incoming.find((item) => item.type.startsWith("image/"));
       if (!file) {
         setError("请拖入 PNG、JPEG 或 WebP 图片");
@@ -1066,7 +1068,7 @@ export default function Home() {
     await addFiles(Array.from(event.target.files || []));
     event.target.value = "";
   }
-  async function pasteImages(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+  async function pasteImages(event: ReactClipboardEvent<HTMLElement>) {
     const clipboardFiles = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
       .map((item, index) => {
@@ -1104,12 +1106,15 @@ export default function Home() {
     event.preventDefault();
     try {
       if (source.startsWith("data:image/")) {
-        setAttachments((current) =>
-          [...current, { name: `粘贴图片-${Date.now()}`, data: source }].slice(
-            0,
-            5,
-          ),
-        );
+        const response = await fetch(source);
+        const blob = await response.blob();
+        const extension =
+          blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+        await addFiles([
+          new File([blob], `粘贴图片-${Date.now()}.${extension}`, {
+            type: blob.type,
+          }),
+        ]);
       } else {
         const response = await fetch("/api/import-image", {
           method: "POST",
@@ -1451,6 +1456,7 @@ export default function Home() {
     <div
       ref={composerRef}
       className={dragActive ? "prompt-card dragging-files" : "prompt-card"}
+      onPaste={(event) => void pasteImages(event)}
       onDragEnter={(event) => {
         event.preventDefault();
         setDragActive(true);
@@ -1524,7 +1530,6 @@ export default function Home() {
               changePrompt(e.target.value, e.currentTarget.selectionStart)
             }
             onKeyDown={keyDown}
-            onPaste={(event) => void pasteImages(event)}
             placeholder="上传参考图、输入文字，描述你想生成的图片。"
             rows={3}
           />
