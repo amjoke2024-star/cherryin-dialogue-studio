@@ -8,6 +8,7 @@ import { buildImageGenerationPayload, resolveProviderImageModel } from "../../..
 import { apiProvider, type ApiSource } from "../../../lib/api-providers";
 import { providerError } from "../../../lib/provider-error";
 import { providerFetch } from "../../../lib/provider-fetch";
+import { fetchGeneratedImage } from "../../../lib/generated-image-download";
 
 type Reference = { name: string; data: string; transient?: boolean };
 const timeout = 600_000;
@@ -264,21 +265,9 @@ async function normalize(value: unknown) {
     return saveGeneratedImage(Buffer.from(encoded, "base64"), contentType);
   }
   if (item?.url) {
-    let lastStatus = 0;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const response = await fetch(item.url, { cache: "no-store", signal: AbortSignal.timeout(60_000) });
-        lastStatus = response.status;
-        if (response.ok) {
-          const bytes = await response.arrayBuffer();
-          return saveGeneratedImage(Buffer.from(bytes), response.headers.get("content-type") || "image/png");
-        }
-      } catch (error) {
-        if (attempt === 2) throw error;
-      }
-      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
-    }
-    throw new Error(`图片已生成，但下载失败${lastStatus ? `（${lastStatus}）` : ""}。请勿直接重新生成。`);
+    const response = await fetchGeneratedImage(item.url);
+    const bytes = await response.arrayBuffer();
+    return saveGeneratedImage(Buffer.from(bytes), response.headers.get("content-type") || "image/png");
   }
   throw new Error("无法识别返回的图片格式。");
 }
