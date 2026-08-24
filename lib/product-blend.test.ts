@@ -5,6 +5,7 @@ import {
   isValidProductBox,
   persistentProductBlendReferences,
   prepareProductBlendInput,
+  productBlendContactGeometry,
   productBlendGuideGeometry,
 } from "./product-blend.ts";
 
@@ -17,6 +18,12 @@ test("realistic lighting prompt preserves product identity", () => {
   const prompt = buildProductBlendPrompt("realistic-lighting", "加强左侧暖光", { hasGuide: true });
   assert.match(prompt, /严格保持产品轮廓、比例、结构、颜色、Logo、包装文字与图案/);
   assert.match(prompt, /定位图.*不得出现在结果中/);
+  assert.match(prompt, /接触融合区域/);
+  assert.match(prompt, /接触暗部/);
+  assert.match(prompt, /投影方向.*主光方向一致/);
+  assert.match(prompt, /承载面材质.*反射/);
+  assert.match(prompt, /允许改动.*接触阴影、投影和反射/);
+  assert.match(prompt, /禁止出现与环境主光方向矛盾的高光/);
   assert.match(prompt, /加强左侧暖光/);
 });
 
@@ -37,6 +44,17 @@ test("guide geometry converts normalized selection to pixels", () => {
   assert.deepEqual(
     productBlendGuideGeometry({ x: 0.1, y: 0.2, width: 0.5, height: 0.4 }, 1000, 500),
     { x: 100, y: 100, width: 500, height: 200 },
+  );
+});
+
+test("contact blend area extends below and around the product while staying in canvas", () => {
+  assert.deepEqual(
+    productBlendContactGeometry({ x: 0.2, y: 0.2, width: 0.4, height: 0.5 }, 1000, 1000),
+    { x: 100, y: 640, width: 600, height: 285 },
+  );
+  assert.deepEqual(
+    productBlendContactGeometry({ x: 0.02, y: 0.55, width: 0.3, height: 0.4 }, 1000, 1000),
+    { x: 0, y: 902, width: 395, height: 98 },
   );
 });
 

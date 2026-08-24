@@ -32,6 +32,19 @@ export function productBlendGuideGeometry(box: NormalizedBox, width: number, hei
   };
 }
 
+export function productBlendContactGeometry(box: NormalizedBox, width: number, height: number) {
+  const left = Math.max(0, box.x - box.width * 0.25);
+  const right = Math.min(1, box.x + box.width * 1.25);
+  const top = Math.max(0, Math.min(1, box.y + box.height * 0.88));
+  const bottom = Math.min(1, top + box.height * 0.57);
+  return {
+    x: Math.round(left * width),
+    y: Math.round(top * height),
+    width: Math.round((right - left) * width),
+    height: Math.round((bottom - top) * height),
+  };
+}
+
 export function buildProductBlendPrompt(
   style: ProductBlendStyle,
   additionalPrompt: string,
@@ -40,15 +53,18 @@ export function buildProductBlendPrompt(
   const common = [
     ...(options.hasGuide ? [
       "第1张图是唯一的干净原图和最终编辑底图；第2张图是产品定位图，只用于确定要处理的产品区域。",
-      "定位图中的遮罩、边框、标签和标记颜色不得出现在结果中。",
+      "定位图中的青色框标示产品区域，橙色框标示接触融合区域；遮罩、边框、标签和标记颜色不得出现在结果中。",
     ] : []),
     "只处理所选产品与周围环境的光影融合关系，保持原图构图、镜头、宽高比和产品数量。",
-    "不增加、删除、替换或复制产品，不无故修改选区外的背景内容。",
+    "不增加、删除、替换或复制产品；允许改动产品附近承载面上必要的接触阴影、投影和反射，除此之外不得修改背景。",
   ];
   const stylePrompt = style === "realistic-lighting"
     ? [
         "采用真实校光：严格保持产品轮廓、比例、结构、颜色、Logo、包装文字与图案。",
-        "分析背景的主光方向、光线软硬、亮度、色温和环境色，只调整产品的明暗、高光、漫反射、环境染色、接触阴影和空间遮蔽。",
+        "先分析背景的主光方向、光线软硬、亮度、色温和环境色，再统一产品全部受光关系；禁止出现与环境主光方向矛盾的高光、亮边或明暗渐变。",
+        "在产品底部与承载面相接处生成紧贴轮廓的接触暗部和空间遮蔽；投影方向必须与背景主光方向一致，并随距离自然变软、变淡。",
+        "根据承载面材质生成克制、真实的反射：光滑表面保留模糊倒影或亮度回馈，粗糙表面只保留柔和色光与明暗回馈，不制造镜面效果。",
+        "产品表面的高光、漫反射、环境染色和轮廓光必须共同服从同一组环境光源逻辑。",
         "让产品像在该环境中真实拍摄，不重新设计产品，不添加装饰元素。",
       ]
     : [
