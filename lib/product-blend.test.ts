@@ -20,15 +20,15 @@ test("unified product blend prompt requires visible relighting on the product it
   assert.match(prompt, /保持产品身份、轮廓、比例、结构、材质属性、Logo、包装文字与图案/);
   assert.doesNotMatch(prompt, /固有色识别|编辑蒙版/);
   assert.match(prompt, /第2张图.*定位/);
-  assert.match(prompt, /白色、黑色和金属表面.*可见的.*环境色/);
+  assert.match(prompt, /白色产品.*环境色/);
+  assert.match(prompt, /黑色和金属表面.*高光与反射/);
   assert.match(prompt, /受光变化不是重新着色/);
   assert.match(prompt, /原产品图中的高光、阴影、明暗分布和白平衡不属于保护内容/);
-  assert.match(prompt, /必须替换原有产品光影/);
-  assert.match(prompt, /亮暗面、高光位置、环境色和反弹光产生真实变化/);
-  assert.match(prompt, /产品表面.*几乎不变.*失败/);
+  assert.match(prompt, /校正.*产品表面.*亮面、暗面、高光、色温和环境染色/);
+  assert.match(prompt, /亮暗面、高光位置、环境色和反弹光与场景一致/);
   assert.match(prompt, /仅增加地面阴影.*失败/);
   assert.match(prompt, /首要任务.*整个产品表面.*亮面、暗面、高光、色温和环境染色/);
-  assert.match(prompt, /必须让产品明显但自然地接受场景光，不能只增加地面阴影/);
+  assert.match(prompt, /环境光影响必须清晰可辨但克制自然，不能只增加地面阴影/);
   assert.match(prompt, /根据场景光源和承载面.*接触阴影、投影和必要反射/);
   assert.match(prompt, /消除.*视觉接缝/);
   assert.match(prompt, /提升整体环境融合度/);
@@ -36,6 +36,16 @@ test("unified product blend prompt requires visible relighting on the product it
   assert.ok(prompt.indexOf("首要任务") < prompt.indexOf("接触阴影"));
   assert.ok(prompt.split("\n").length <= 9);
   assert.match(prompt, /加强左侧暖光/);
+});
+
+test("product blend keeps environmental relighting clean and continuous", () => {
+  const prompt = buildProductBlendPrompt("", { hasGuide: true });
+  assert.match(prompt, /清晰可辨但克制自然/);
+  assert.match(prompt, /沿产品曲面连续、平滑过渡/);
+  assert.match(prompt, /不得形成污渍、云斑、块状染色、颗粒、噪点或不规则涂抹/);
+  assert.match(prompt, /保持背景原有的平滑渐变与干净表面，不增加任何纹理/);
+  assert.match(prompt, /白色产品.*合理的受光面、暗面和反射边缘/);
+  assert.doesNotMatch(prompt, /必须让产品明显但自然地接受场景光/);
 });
 
 test("location guide uses solid regions without copying source-image lighting", () => {
