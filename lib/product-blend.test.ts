@@ -32,7 +32,10 @@ test("unified product blend prompt requires visible relighting on the product it
   assert.match(prompt, /不得仅通过整体压暗或提亮产品来表现融合/);
   assert.match(prompt, /受光面.*场景主光色/);
   assert.match(prompt, /暗面和底部.*环境色与承载面反弹光/);
-  assert.match(prompt, /根据场景光源和承载面.*接触阴影、投影和必要反射/);
+  assert.match(prompt, /投影方向必须与主光方向一致/);
+  assert.match(prompt, /接触处最深.*向外自然变软变淡/);
+  assert.match(prompt, /随承载面的高度、凹凸和遮挡关系变形/);
+  assert.match(prompt, /不得形成均匀黑边或悬浮感/);
   assert.match(prompt, /消除.*视觉接缝/);
   assert.match(prompt, /提升整体环境融合度/);
   assert.match(prompt, /不要改变.*风格/);
