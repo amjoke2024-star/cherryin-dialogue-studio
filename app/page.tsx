@@ -40,8 +40,6 @@ import {
   prepareProductBlendInput,
   shouldCollapseProductBlendWorkspace,
   type ProductBlendState,
-  type ProductBlendStep,
-  type ProductBlendStyle,
 } from "../lib/product-blend";
 import {
   apiProvider,
@@ -349,8 +347,6 @@ export default function Home() {
   const [textEditWorkspaceExpanded, setTextEditWorkspaceExpanded] = useState(true);
   const [productBlendImage, setProductBlendImage] = useState<Attachment | null>(null);
   const [productBlendBox, setProductBlendBox] = useState<NormalizedBox | null>(null);
-  const [productBlendStep, setProductBlendStep] = useState<ProductBlendStep>("select-region");
-  const [productBlendStyle, setProductBlendStyle] = useState<ProductBlendStyle | null>(null);
   const [productBlendPrompt, setProductBlendPrompt] = useState("");
   const [productBlendWorkspaceExpanded, setProductBlendWorkspaceExpanded] = useState(true);
   const [modelOptions, setModelOptions] = useState(fallbackModels);
@@ -921,8 +917,6 @@ export default function Home() {
     setTextEditWorkspaceExpanded(true);
     setProductBlendImage(null);
     setProductBlendBox(null);
-    setProductBlendStep("select-region");
-    setProductBlendStyle(null);
     setProductBlendPrompt("");
     setProductBlendWorkspaceExpanded(true);
     setError("");
@@ -944,8 +938,6 @@ export default function Home() {
   function resetProductBlendDraft() {
     setProductBlendImage(null);
     setProductBlendBox(null);
-    setProductBlendStep("select-region");
-    setProductBlendStyle(null);
     setProductBlendPrompt("");
     setProductBlendWorkspaceExpanded(true);
     setError("");
@@ -1008,8 +1000,6 @@ export default function Home() {
   async function setProductBlendSource(file: File) {
     setProductBlendImage({ name: file.name, data: await readFile(file) });
     setProductBlendBox(null);
-    setProductBlendStep("select-region");
-    setProductBlendStyle(null);
     setProductBlendPrompt("");
     setProductBlendWorkspaceExpanded(true);
     setError("");
@@ -1141,11 +1131,10 @@ export default function Home() {
     const isProductBlend = repeat?.mode === "product-blend" || (!repeat && studioMode === "product-blend");
     const textEditState = repeat?.textEdit || (textEditImage ? { sourceImage: textEditImage, regions: textRegions } : undefined);
     const productBlendState = repeat?.productBlend || (
-      productBlendImage && productBlendBox && productBlendStyle
+      productBlendImage && productBlendBox
         ? {
             sourceImage: productBlendImage,
             productBox: productBlendBox,
-            blendStyle: productBlendStyle,
             additionalPrompt: productBlendPrompt,
           }
         : undefined
@@ -1164,10 +1153,6 @@ export default function Home() {
     }
     if (isProductBlend && !isValidProductBox(productBlendState?.productBox || null)) {
       setError("请框选图片中的产品区域");
-      return;
-    }
-    if (isProductBlend && !productBlendState?.blendStyle) {
-      setError("请选择真实校光或视觉优先");
       return;
     }
     let runPrompt = repeat?.prompt || prompt.trim();
@@ -1555,7 +1540,7 @@ export default function Home() {
         ) : (
           <div className="text-edit-intro">
             <strong>{productBlendImage ? productBlendWorkspaceExpanded ? "框选图片中的产品" : "产品溶图任务已提交" : "上传一张需要溶图的产品场景图"}</strong>
-            <span>{productBlendImage ? productBlendWorkspaceExpanded ? "框选产品后，选择真实校光或视觉优先。" : "溶图设置已收起，可在下方查看当前任务进度。" : "程序会根据背景光影重新融合产品。"}</span>
+            <span>{productBlendImage ? productBlendWorkspaceExpanded ? "框选产品后，按照统一融合标准直接生成。" : "溶图设置已收起，可在下方查看当前任务进度。" : "程序会根据背景光影重新融合产品。"}</span>
             {productBlendImage && !productBlendWorkspaceExpanded && (
               <button type="button" className="text-edit-expand" onClick={() => setProductBlendWorkspaceExpanded(true)}>展开溶图设置</button>
             )}
@@ -1610,13 +1595,9 @@ export default function Home() {
         <ProductBlendWorkspace
           image={productBlendImage}
           box={productBlendBox}
-          step={productBlendStep}
-          style={productBlendStyle}
           additionalPrompt={productBlendPrompt}
           busy={busy}
           onBoxChange={setProductBlendBox}
-          onStepChange={setProductBlendStep}
-          onStyleChange={setProductBlendStyle}
           onAdditionalPromptChange={setProductBlendPrompt}
           onBack={resetProductBlendDraft}
           onSubmit={() => void send()}
@@ -1878,7 +1859,7 @@ export default function Home() {
         )}
         <button
           className="send"
-          disabled={(studioMode === "text-edit" && (recognizingText || !textEditImage || !hasPendingReplacement(textRegions))) || (studioMode === "product-blend" && (!productBlendImage || !isValidProductBox(productBlendBox) || !productBlendStyle))}
+          disabled={(studioMode === "text-edit" && (recognizingText || !textEditImage || !hasPendingReplacement(textRegions))) || (studioMode === "product-blend" && (!productBlendImage || !isValidProductBox(productBlendBox)))}
           aria-label={busy ? "加入生成队列" : studioMode === "text-edit" ? "开始改字" : studioMode === "product-blend" ? "开始溶图" : "开始生成"}
           onClick={() => void send()}
         >
@@ -2150,9 +2131,7 @@ export default function Home() {
                         setStudioMode("product-blend");
                         setProductBlendImage(sourceImage);
                         setProductBlendBox(turn.productBlend.productBox);
-                        setProductBlendStyle(turn.productBlend.blendStyle);
                         setProductBlendPrompt(turn.productBlend.additionalPrompt);
-                        setProductBlendStep("choose-style");
                         setProductBlendWorkspaceExpanded(true);
                         setError("");
                         window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });

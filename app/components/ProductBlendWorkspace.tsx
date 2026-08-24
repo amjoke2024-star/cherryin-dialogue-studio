@@ -9,20 +9,14 @@ import {
 } from "../../lib/text-edit";
 import {
   isValidProductBox,
-  type ProductBlendStep,
-  type ProductBlendStyle,
 } from "../../lib/product-blend";
 
 type ProductBlendWorkspaceProps = {
   image: { name: string; data: string };
   box: NormalizedBox | null;
-  step: ProductBlendStep;
-  style: ProductBlendStyle | null;
   additionalPrompt: string;
   busy: boolean;
   onBoxChange(box: NormalizedBox | null): void;
-  onStepChange(step: ProductBlendStep): void;
-  onStyleChange(style: ProductBlendStyle): void;
   onAdditionalPromptChange(value: string): void;
   onBack(): void;
   onSubmit(): void;
@@ -156,52 +150,21 @@ export default function ProductBlendWorkspace(props: ProductBlendWorkspaceProps)
       </div>
 
       <div className="product-blend-controls">
-        {props.step === "select-region" ? (
-          <>
-            <header><small>第 1 步，共 2 步</small><strong>框选需要融合的产品</strong></header>
-            <p>尽量完整框住产品，周围可以保留少量环境，便于模型判断接触阴影。</p>
-            <div className="product-blend-actions">
-              <button type="button" onClick={props.onBack}>返回重新选图</button>
-              <button
-                type="button"
-                className="primary"
-                disabled={!isValidProductBox(props.box)}
-                onClick={() => props.onStepChange("choose-style")}
-              >下一步</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <header><small>第 2 步，共 2 步</small><strong>选择融合方式</strong></header>
-            <div className="product-blend-style-options">
-              <button
-                type="button"
-                aria-pressed={props.style === "realistic-lighting"}
-                className={props.style === "realistic-lighting" ? "chosen" : ""}
-                onClick={() => props.onStyleChange("realistic-lighting")}
-              ><strong>真实校光</strong><span>严格保留产品外观，只统一环境光、色温、反射和阴影。</span></button>
-              <button
-                type="button"
-                aria-pressed={props.style === "visual-priority"}
-                className={props.style === "visual-priority" ? "chosen" : ""}
-                onClick={() => props.onStyleChange("visual-priority")}
-              ><strong>视觉优先</strong><span>保留产品核心识别信息，强化材质、高光和广告氛围。</span></button>
-            </div>
-            <label>
-              <span>补充要求（可选）</span>
-              <textarea
-                value={props.additionalPrompt}
-                onChange={(event) => props.onAdditionalPromptChange(event.target.value)}
-                placeholder="例如：加强左侧暖光，产品不要变色"
-                rows={3}
-              />
-            </label>
-            <div className="product-blend-actions">
-              <button type="button" onClick={() => props.onStepChange("select-region")}>返回调整选区</button>
-              <button type="button" className="primary" disabled={!props.style || props.busy} onClick={props.onSubmit}>开始溶图</button>
-            </div>
-          </>
-        )}
+        <header><small>统一融合标准</small><strong>框选需要融合的产品</strong></header>
+        <p>完整框住产品。程序会统一环境光，补足接触暗部、投影和材质反射。</p>
+        <label>
+          <span>补充要求（可选）</span>
+          <textarea
+            value={props.additionalPrompt}
+            onChange={(event) => props.onAdditionalPromptChange(event.target.value)}
+            placeholder="例如：加强左侧暖光，产品不要变色"
+            rows={3}
+          />
+        </label>
+        <div className="product-blend-actions">
+          <button type="button" onClick={props.onBack}>返回重新选图</button>
+          <button type="button" className="primary" disabled={!isValidProductBox(props.box) || props.busy} onClick={props.onSubmit}>开始溶图</button>
+        </div>
       </div>
     </section>
   );
