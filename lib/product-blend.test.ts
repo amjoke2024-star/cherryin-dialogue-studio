@@ -16,7 +16,10 @@ test("product selection needs at least one percent on both axes", () => {
 
 test("unified product blend prompt preserves identity and grounds the product", () => {
   const prompt = buildProductBlendPrompt("加强左侧暖光", { hasGuide: true });
-  assert.match(prompt, /严格保持产品轮廓、比例、结构、颜色、Logo、包装文字与图案/);
+  assert.match(prompt, /保持产品轮廓、比例、结构、材质属性、固有色识别、Logo、包装文字与图案/);
+  assert.match(prompt, /原产品图中的高光、阴影、明暗分布和白平衡不属于保护内容/);
+  assert.match(prompt, /必须替换原有产品光影/);
+  assert.match(prompt, /亮暗面、高光位置、环境色和反弹光产生真实变化/);
   assert.match(prompt, /定位图.*不得出现在结果中/);
   assert.match(prompt, /接触融合区域/);
   assert.match(prompt, /首要任务.*整个产品表面.*亮面、暗面、高光、色温和环境染色/);
@@ -67,5 +70,5 @@ test("product blend input uses one standard even for history carrying a legacy s
   });
   assert.match(prepared.prompt, /加强左侧暖光/);
   assert.doesNotMatch(prepared.prompt, /视觉优先|允许加强广告氛围/);
-  assert.match(prepared.prompt, /严格保持产品轮廓、比例、结构、颜色、Logo、包装文字与图案/);
+  assert.match(prepared.prompt, /保持产品轮廓、比例、结构、材质属性、固有色识别、Logo、包装文字与图案/);
 });
