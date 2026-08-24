@@ -15,49 +15,19 @@ test("product selection needs at least one percent on both axes", () => {
   assert.equal(isValidProductBox({ x: 0.1, y: 0.1, width: 0.009, height: 0.4 }), false);
 });
 
-test("unified product blend prompt requires visible relighting on the product itself", () => {
+test("product blend prompt stays concise while preserving the blend goal", () => {
   const prompt = buildProductBlendPrompt("加强左侧暖光", { hasGuide: true });
-  assert.match(prompt, /保持产品身份、轮廓、比例、结构、材质属性、Logo、包装文字与图案/);
-  assert.doesNotMatch(prompt, /固有色识别|编辑蒙版/);
-  assert.match(prompt, /第2张图.*定位/);
-  assert.match(prompt, /暗面和底部.*环境色与承载面反弹光/);
-  assert.match(prompt, /白色、黑色和金属表面.*高光与反射/);
-  assert.match(prompt, /受光变化不是重新着色/);
-  assert.match(prompt, /原产品图中的高光、阴影、明暗分布和白平衡不属于保护内容/);
-  assert.match(prompt, /校正.*产品表面.*亮面、暗面、高光、色温和环境染色/);
-  assert.match(prompt, /仅增加地面阴影.*失败/);
-  assert.match(prompt, /首要任务.*整个产品表面.*亮面、暗面、高光、色温和环境染色/);
-  assert.match(prompt, /环境光影响必须清晰可见且自然/);
-  assert.match(prompt, /先判断背景属于方向光还是漫射光/);
-  assert.match(prompt, /主光明确时.*符合产品曲面和光向的连续明暗与冷暖变化/);
-  assert.match(prompt, /漫射场景.*不虚构强方向光/);
-  assert.match(prompt, /不得仅通过整体压暗或提亮产品来表现融合/);
-  assert.match(prompt, /受光面.*场景主光色/);
-  assert.match(prompt, /暗面和底部.*环境色与承载面反弹光/);
-  assert.match(prompt, /环境色只作用于合理的暗面、背光边缘和反射面/);
-  assert.match(prompt, /不得给整个产品统一染色/);
-  assert.match(prompt, /受光面.*保持产品原有的中性基色和材质通透感/);
-  assert.match(prompt, /主光明确时，投影方向必须与主光方向一致/);
-  assert.match(prompt, /漫射光下只生成紧凑的接触阴影、环境遮蔽和轻微地面反射/);
-  assert.match(prompt, /接触处最深.*向外自然变软变淡/);
-  assert.match(prompt, /随承载面的高度、凹凸和遮挡关系变形/);
-  assert.match(prompt, /不得形成均匀黑边或悬浮感/);
-  assert.match(prompt, /消除.*视觉接缝/);
-  assert.match(prompt, /提升整体环境融合度/);
-  assert.match(prompt, /不要改变.*风格/);
-  assert.ok(prompt.indexOf("首要任务") < prompt.indexOf("接触阴影"));
-  assert.ok(prompt.split("\n").length <= 9);
-  assert.match(prompt, /加强左侧暖光/);
+  assert.equal(prompt, [
+    "第1张图是唯一底图；第2张图仅用于定位产品与接触区域，其颜色不得进入结果。",
+    "将产品自然融入场景，重塑产品光影和接触关系；产品受场景光源及环境光漫反射影响，产生自然的阴影、投影和反射。不改变产品外观，不改变背景。",
+    "用户补充要求：加强左侧暖光",
+  ].join("\n"));
 });
 
-test("product blend keeps environmental relighting clean and continuous", () => {
-  const prompt = buildProductBlendPrompt("", { hasGuide: true });
-  assert.match(prompt, /清晰可见且自然/);
-  assert.match(prompt, /先判断背景属于方向光还是漫射光/);
-  assert.match(prompt, /不得形成污渍、云斑、块状染色、颗粒、噪点或不规则涂抹/);
-  assert.match(prompt, /保持背景原有的平滑渐变与干净表面，不增加任何纹理/);
-  assert.match(prompt, /白色、黑色和金属表面.*高光与反射.*服从场景光源/);
-  assert.doesNotMatch(prompt, /必须让产品明显但自然地接受场景光/);
+test("product blend without a guide uses only the core instruction", () => {
+  const prompt = buildProductBlendPrompt("");
+  assert.equal(prompt.split("\n").length, 1);
+  assert.doesNotMatch(prompt, /方向光|漫射光下|污渍|云斑|失败/);
 });
 
 test("location guide uses solid regions without copying source-image lighting", () => {
@@ -111,5 +81,5 @@ test("product blend input uses one standard even for history carrying a legacy s
   });
   assert.match(prepared.prompt, /加强左侧暖光/);
   assert.doesNotMatch(prepared.prompt, /视觉优先|允许加强广告氛围/);
-  assert.match(prepared.prompt, /保持产品身份、轮廓、比例、结构、材质属性、Logo、包装文字与图案/);
+  assert.match(prepared.prompt, /不改变产品外观，不改变背景/);
 });
