@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildImageGenerationPayload } from "./image-generation-payload.ts";
+import {
+  buildImageGenerationPayload,
+  resolveProviderImageModel,
+} from "./image-generation-payload.ts";
 
 test("Apilio Gemini maps ratio and resolution through its compatible size and quality fields", () => {
   assert.deepEqual(
@@ -88,17 +91,21 @@ test("non-Gemini image models keep the existing OpenAI-compatible payload", () =
   );
 });
 
-test("Apilio routes GPT Image 2 requests with 4K dimensions through its 4K model alias", () => {
+test("Apilio requests GPT Image 2 at 4K through size without changing the model id", () => {
+  const payload = buildImageGenerationPayload({
+    providerName: "Apilio",
+    model: "gpt-image-2",
+    prompt: "product photo",
+    size: "2480x3312",
+    quality: "high",
+    count: 1,
+    responseFormat: "url",
+  });
+
+  assert.equal(payload.model, "gpt-image-2");
+  assert.equal(payload.size, "2480x3312");
   assert.equal(
-    buildImageGenerationPayload({
-      providerName: "Apilio",
-      model: "gpt-image-2",
-      prompt: "product photo",
-      size: "3520x2336",
-      quality: "high",
-      count: 1,
-      responseFormat: "url",
-    }).model,
-    "gpt-image-2-4k",
+    resolveProviderImageModel("Apilio", "gpt-image-2", "2480x3312"),
+    "gpt-image-2",
   );
 });

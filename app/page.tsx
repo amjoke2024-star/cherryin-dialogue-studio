@@ -43,7 +43,7 @@ import {
   type NormalizedBox,
   type TextRegion,
 } from "../lib/text-edit";
-import { createProductBlendGuideImage } from "../lib/product-blend-guide";
+import { createProductBlendMaskImage } from "../lib/product-blend-guide";
 import {
   isValidProductBox,
   prepareProductBlendInput,
@@ -56,8 +56,9 @@ import {
   createLatestProviderRequestGate,
   type ApiSource,
 } from "../lib/api-providers";
+import { downloadImageBatch } from "../lib/batch-download";
 
-type Attachment = { name: string; data: string; transient?: boolean };
+type Attachment = { name: string; data: string; transient?: boolean; role?: "mask" };
 type TextEditState = { sourceImage: Attachment; regions: TextRegion[] };
 type Turn = {
   id: string;
@@ -1204,15 +1205,15 @@ export default function Home() {
     }
     if (isProductBlend) {
       try {
-        const guideImage = await createProductBlendGuideImage(
+        const maskImage = await createProductBlendMaskImage(
           productBlendState!.sourceImage.data,
           productBlendState!.productBox,
         );
-        const prepared = prepareProductBlendInput(productBlendState!, guideImage);
+        const prepared = prepareProductBlendInput(productBlendState!, maskImage);
         runPrompt = prepared.prompt;
         runAttachments = prepared.references;
       } catch (guideError) {
-        setError(guideError instanceof Error ? guideError.message : "产品定位图生成失败，请重新上传图片");
+        setError(guideError instanceof Error ? guideError.message : "产品编辑蒙版生成失败，请重新上传图片");
         return;
       }
     }
@@ -2176,6 +2177,13 @@ export default function Home() {
                     {turn.mode === "text-edit" ? "继续改字" : turn.mode === "product-blend" ? "继续溶图" : "重新编辑"}
                   </button>
                   <button onClick={() => void send(turn)}>再次生成</button>
+                  {turn.images.length > 0 && (
+                    <button
+                      onClick={() => downloadImageBatch(turn.images, turn.createdAt)}
+                    >
+                      全部下载
+                    </button>
+                  )}
                   <div className="result-menu-anchor" data-result-menu>
                     <button
                       onClick={() =>

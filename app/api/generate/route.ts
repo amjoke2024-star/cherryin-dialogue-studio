@@ -10,8 +10,9 @@ import { providerError } from "../../../lib/provider-error";
 import { providerFetch } from "../../../lib/provider-fetch";
 import { fetchGeneratedImage } from "../../../lib/generated-image-download";
 import { providerRequestId, readProviderResponseText } from "../../../lib/provider-response";
+import { appendEditReferenceFiles, type EditReference } from "../../../lib/edit-request";
 
-type Reference = { name: string; data: string; transient?: boolean };
+type Reference = EditReference;
 const timeout = 600_000;
 const geminiTimeout = 600_000;
 const bflTimeout = 600_000;
@@ -93,7 +94,7 @@ async function requestGeneration(apiKey: string, baseURL: string, providerName: 
   try { data = text ? JSON.parse(text) : {}; } catch { data = { message: text }; }
   if (!response.ok) throw new Error(providerError(data, response.status, providerName));
   const entries = Array.isArray(data.data) ? data.data : Array.isArray(data.images) ? data.images : [];
-  return Promise.all(entries.map(normalize));
+  return Promise.all(entries.map((entry) => normalize(entry)));
 }
 
 async function requestBfl(apiKey: string, endpoint: string, prompt: string, size: string | undefined, references: Reference[]) {
@@ -219,8 +220,7 @@ async function requestEdit(apiKey: string, apiSource: ApiSource, model: string, 
   const providerModel = resolveProviderImageModel(providerName, model, size);
   const form = new FormData();
   form.append("model", providerModel); form.append("prompt", prompt); if (size) form.append("size", size); form.append("quality", quality); form.append("n", "1");
-  const files = await Promise.all(references.map(toFile));
-  files.forEach((file) => form.append("image", file));
+  await appendEditReferenceFiles(form, references, toFile);
   const requestStartedAt = Date.now();
   let response: Response;
   try {

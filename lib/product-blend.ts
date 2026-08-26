@@ -8,7 +8,7 @@ export type ProductBlendState = {
   additionalPrompt: string;
 };
 
-type Reference = { name: string; data: string; transient?: boolean };
+type Reference = { name: string; data: string; transient?: boolean; role?: "mask" };
 
 export function isValidProductBox(box: NormalizedBox | null): box is NormalizedBox {
   return Boolean(box && box.width >= 0.01 && box.height >= 0.01);
@@ -44,37 +44,32 @@ export function productBlendContactGeometry(box: NormalizedBox, width: number, h
   };
 }
 
-export function productBlendGuideLayers(box: NormalizedBox, width: number, height: number) {
+export function productBlendMaskRegions(box: NormalizedBox, width: number, height: number) {
   return [
-    { role: "background" as const, x: 0, y: 0, width, height, color: "#050607" },
-    { role: "contact" as const, ...productBlendContactGeometry(box, width, height), color: "#6b7280" },
-    { role: "product" as const, ...productBlendGuideGeometry(box, width, height), color: "#ffffff" },
+    { role: "contact" as const, ...productBlendContactGeometry(box, width, height) },
+    { role: "product" as const, ...productBlendGuideGeometry(box, width, height) },
   ];
 }
 
 export function buildProductBlendPrompt(
   additionalPrompt: string,
-  options: { hasGuide?: boolean } = {},
 ) {
   const prompt = [
-    ...(options.hasGuide ? [
-      "第1张图是唯一底图；第2张图仅用于定位产品与接触区域，其颜色不得进入结果。",
-    ] : []),
     "将产品自然融入场景，重塑光影和接触关系。产品表面自然反射周围环境色，色调、色温、明暗和景深与场景一致，并产生合理的反弹光、接触阴影及必要倒影，看起来原本就在这个环境中，避免贴图感。不改变产品外观，不改变背景。",
   ];
   const extra = additionalPrompt.trim() ? [`用户补充要求：${additionalPrompt.trim()}`] : [];
   return [...prompt, ...extra].join("\n");
 }
 
-export function prepareProductBlendInput(state: ProductBlendState, guideData: string): {
+export function prepareProductBlendInput(state: ProductBlendState, maskData: string): {
   prompt: string;
   references: Reference[];
 } {
   return {
-    prompt: buildProductBlendPrompt(state.additionalPrompt, { hasGuide: true }),
+    prompt: buildProductBlendPrompt(state.additionalPrompt),
     references: [
       state.sourceImage,
-      { name: "产品定位图.png", data: guideData, transient: true },
+      { name: "产品编辑蒙版.png", data: maskData, transient: true, role: "mask" },
     ],
   };
 }
