@@ -2,7 +2,6 @@
 
 import {
   ChangeEvent,
-  KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -1468,13 +1467,6 @@ export default function Home() {
       } else clearSavedWork();
     }
   }
-  function keyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void send();
-    }
-  }
-
   const composer = (
     <div
       ref={composerRef}
@@ -1551,7 +1543,6 @@ export default function Home() {
             onChange={(e) =>
               changePrompt(e.target.value, e.currentTarget.selectionStart)
             }
-            onKeyDown={keyDown}
             placeholder="上传参考图、输入文字，描述你想生成的图片。"
             rows={3}
           />
