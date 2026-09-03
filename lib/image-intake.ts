@@ -5,6 +5,8 @@ export function imageIntakeTarget(mode: StudioMode) {
     ? "text-edit"
     : mode === "product-blend"
       ? "product-blend"
+      : mode === "image-upscale"
+        ? "image-upscale"
       : "attachments";
 }
 

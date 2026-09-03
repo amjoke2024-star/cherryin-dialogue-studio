@@ -4,10 +4,12 @@ export type JobTerminationInput = {
   explicitCancel: boolean;
 };
 
-export type StudioMode = "generate" | "text-edit" | "product-blend";
+export type StudioMode = "generate" | "text-edit" | "product-blend" | "image-upscale";
 
 export function normalizeStudioMode(value: unknown): StudioMode {
-  return value === "text-edit" || value === "product-blend" ? value : "generate";
+  return value === "text-edit" || value === "product-blend" || value === "image-upscale"
+    ? value
+    : "generate";
 }
 
 export function supportsMultipleImages(mode: StudioMode) {

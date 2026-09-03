@@ -9,6 +9,7 @@ test("pasted images follow the active studio mode", () => {
   assert.equal(imageIntakeTarget("generate"), "attachments");
   assert.equal(imageIntakeTarget("text-edit"), "text-edit");
   assert.equal(imageIntakeTarget("product-blend"), "product-blend");
+  assert.equal(imageIntakeTarget("image-upscale"), "image-upscale");
 });
 
 test("page paste listener receives paste anywhere and is removable", () => {

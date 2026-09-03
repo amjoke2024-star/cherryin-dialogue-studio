@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  apilioProxyOptions,
   internalGenerationFetchTimeouts,
   providerFetchTimeouts,
   readableFetchError,
 } from "./provider-fetch.ts";
+
+test("Apilio transport adopts the configured HTTPS proxy without exposing it to other providers", () => {
+  assert.deepEqual(
+    apilioProxyOptions({
+      HTTPS_PROXY: "http://127.0.0.1:10811",
+      HTTP_PROXY: "http://127.0.0.1:10811",
+      NO_PROXY: "localhost,127.0.0.1",
+    }),
+    {
+      httpsProxy: "http://127.0.0.1:10811",
+      httpProxy: "http://127.0.0.1:10811",
+      noProxy: "localhost,127.0.0.1",
+    },
+  );
+  assert.equal(apilioProxyOptions({}), null);
+});
 
 test("internal generation transport keeps long-running jobs open for ten minutes", () => {
   assert.deepEqual(internalGenerationFetchTimeouts(), {

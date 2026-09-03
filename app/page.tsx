@@ -56,6 +56,7 @@ import {
   type ApiSource,
 } from "../lib/api-providers";
 import { downloadImageBatch } from "../lib/batch-download";
+import { prepareImageUpscaleInput } from "../lib/image-upscale";
 
 type Attachment = { name: string; data: string; transient?: boolean; role?: "mask" };
 type TextEditState = { sourceImage: Attachment; regions: TextRegion[] };
@@ -967,6 +968,13 @@ export default function Home() {
       if (source && !productBlendImage) setProductBlendImage(source);
       setProductBlendWorkspaceExpanded(true);
     }
+    if (next === "image-upscale") {
+      const source = attachments[0] || productBlendImage || textEditImage;
+      if (source) setAttachments([source]);
+      setRatioName("智能");
+      setSize(ratios[0].value);
+      if (resolution === "1K") setResolution("2K");
+    }
     if ((next === "text-edit" || next === "product-blend") && apiSource === "bfl") {
       const nextSource: ApiSource = apilioApiKey.trim() ? "apilio" : "cherryin";
       setApiSource(nextSource);
@@ -1046,6 +1054,16 @@ export default function Home() {
         return;
       }
       await setProductBlendSource(file);
+      return;
+    }
+    if (target === "image-upscale") {
+      const file = incoming.find((item) => item.type.startsWith("image/"));
+      if (!file) {
+        setError("请拖入 PNG、JPEG 或 WebP 图片");
+        return;
+      }
+      setAttachments([{ name: file.name, data: await readFile(file) }]);
+      setError("");
       return;
     }
     const files = incoming
@@ -1158,6 +1176,7 @@ export default function Home() {
   async function send(repeat?: Turn) {
     const isTextEdit = repeat?.mode === "text-edit" || (!repeat && studioMode === "text-edit");
     const isProductBlend = repeat?.mode === "product-blend" || (!repeat && studioMode === "product-blend");
+    const isImageUpscale = repeat?.mode === "image-upscale" || (!repeat && studioMode === "image-upscale");
     const textEditState = repeat?.textEdit || (textEditImage ? { sourceImage: textEditImage, regions: textRegions } : undefined);
     const productBlendState = repeat?.productBlend || (
       productBlendImage && productBlendBox
@@ -1182,6 +1201,11 @@ export default function Home() {
     }
     if (isProductBlend && !isValidProductBox(productBlendState?.productBox || null)) {
       setError("请框选图片中的产品区域");
+      return;
+    }
+    const upscaleSource = (repeat?.attachments || attachments)[0];
+    if (isImageUpscale && !upscaleSource) {
+      setError("请先上传需要放大的图片");
       return;
     }
     let runPrompt = repeat?.prompt || prompt.trim();
@@ -1216,6 +1240,11 @@ export default function Home() {
         return;
       }
     }
+    if (isImageUpscale) {
+      const prepared = prepareImageUpscaleInput(upscaleSource!);
+      runPrompt = prepared.prompt;
+      runAttachments = prepared.references;
+    }
     const requestedModel = repeat?.modelId || model;
     const runModel = (isTextEdit || isProductBlend) && !isGptImage2(requestedModel)
       ? initialDefaultModels[apiSource === "bfl" ? "cherryin" : apiSource]
@@ -1227,7 +1256,7 @@ export default function Home() {
         ? activeModel.name
         : (modelOptions.find((item) => item.id === runModel)?.name || "GPT Image 2")
     );
-    const runRatio = isProductBlend ? "智能" : repeat?.ratioName || ratioName;
+    const runRatio = isProductBlend || isImageUpscale ? "智能" : repeat?.ratioName || ratioName;
     const requestedResolution = repeat?.resolution || resolution;
     const runResolution =
       isBflModel(runModel) && requestedResolution === "4K"
@@ -1268,7 +1297,7 @@ export default function Home() {
         ? await intelligentOutputSize(runAttachments, runResolution, runModel)
         : fixedOutputSize(runRatio, runResolution, runModel);
     const runCount = generationCountForMode(
-      isTextEdit ? "text-edit" : isProductBlend ? "product-blend" : "generate",
+      isTextEdit ? "text-edit" : isProductBlend ? "product-blend" : isImageUpscale ? "image-upscale" : "generate",
       repeat?.count || count,
     );
     if (!runPrompt) {
@@ -1299,7 +1328,7 @@ export default function Home() {
       count: runCount,
       attachments: runAttachments,
       submittedAt: Date.now(),
-      mode: isTextEdit ? "text-edit" : isProductBlend ? "product-blend" : "generate",
+      mode: isTextEdit ? "text-edit" : isProductBlend ? "product-blend" : isImageUpscale ? "image-upscale" : "generate",
       textEdit: isTextEdit ? textEditState : undefined,
       productBlend: isProductBlend ? productBlendState : undefined,
     };
@@ -1492,7 +1521,7 @@ export default function Home() {
     >
       {dragActive && (
         <div className="drop-overlay">
-          <strong>{studioMode === "text-edit" ? "松开即可识别文字" : studioMode === "product-blend" ? "松开即可框选产品" : "松开即可批量上传"}</strong>
+          <strong>{studioMode === "text-edit" ? "松开即可识别文字" : studioMode === "product-blend" ? "松开即可框选产品" : studioMode === "image-upscale" ? "松开即可选择放大图片" : "松开即可批量上传"}</strong>
           <span>{studioMode === "generate" ? "支持 PNG、JPEG、WebP · 最多 5 张" : "支持 PNG、JPEG、WebP · 每次 1 张"}</span>
         </div>
       )}
@@ -1516,6 +1545,13 @@ export default function Home() {
             <>
               <span className="upload-stack">
                 <img src={productBlendImage.data} alt={productBlendImage.name} />
+              </span>
+              <b>↻</b>
+            </>
+          ) : studioMode === "image-upscale" && attachments[0] ? (
+            <>
+              <span className="upload-stack">
+                <img src={attachments[0].data} alt={attachments[0].name} />
               </span>
               <b>↻</b>
             </>
@@ -1560,13 +1596,18 @@ export default function Home() {
               </button>
             )}
           </div>
-        ) : (
+        ) : studioMode === "product-blend" ? (
           <div className="text-edit-intro">
             <strong>{productBlendImage ? productBlendWorkspaceExpanded ? "框选图片中的产品" : "产品溶图任务已提交" : "上传一张需要溶图的产品场景图"}</strong>
             <span>{productBlendImage ? productBlendWorkspaceExpanded ? "框选产品后，按照统一融合标准直接生成。" : "溶图设置已收起，可在下方查看当前任务进度。" : "程序会根据背景光影重新融合产品。"}</span>
             {productBlendImage && !productBlendWorkspaceExpanded && (
               <button type="button" className="text-edit-expand" onClick={() => setProductBlendWorkspaceExpanded(true)}>展开溶图设置</button>
             )}
+          </div>
+        ) : (
+          <div className="text-edit-intro">
+            <strong>{attachments[0] ? "已选择需要放大的图片" : "上传一张需要放大的图片"}</strong>
+            <span>{attachments[0] ? "将优先忠实提升清晰度，仅对不足的细节进行克制补全。" : "自动保留原图比例，可输出 2K 或 4K。"}</span>
           </div>
         )}
       </div>
@@ -1644,6 +1685,12 @@ export default function Home() {
           onClick={() => switchStudioMode("product-blend")}
         >
           产品溶图
+        </button>
+        <button
+          className={studioMode === "image-upscale" ? "tool active" : "tool"}
+          onClick={() => switchStudioMode("image-upscale")}
+        >
+          图片放大
         </button>
         <div className="popover-anchor" data-floating-panel>
           <button
@@ -1750,7 +1797,7 @@ export default function Home() {
             <div className="popover format-popover">
               <p>选择比例</p>
               <div className="ratio-grid">
-                {ratios.map((item) => (
+                {(studioMode === "image-upscale" ? ratios.slice(0, 1) : ratios).map((item) => (
                   <button
                     key={`${item.name}-${item.value}`}
                     className={ratioName === item.name ? "chosen" : ""}
@@ -1766,7 +1813,7 @@ export default function Home() {
               </div>
               <p>选择分辨率</p>
               <div className="segments">
-                {["1K", "2K", "4K"].map((value) => (
+                {(studioMode === "image-upscale" ? ["2K", "4K"] : ["1K", "2K", "4K"]).map((value) => (
                   <button
                     key={value}
                     disabled={value === "4K" && isBflModel(model)}
@@ -1784,7 +1831,7 @@ export default function Home() {
                 ))}
               </div>
               <div className="compact-options">
-                <div>
+                <div className={studioMode === "image-upscale" ? "mode-hidden" : ""}>
                   <p>生成质量</p>
                   <div className="segments quality-segments">
                     <button
@@ -1882,8 +1929,8 @@ export default function Home() {
         )}
         <button
           className="send"
-          disabled={(studioMode === "text-edit" && (recognizingText || !textEditImage || !hasPendingReplacement(textRegions))) || (studioMode === "product-blend" && (!productBlendImage || !isValidProductBox(productBlendBox)))}
-          aria-label={busy ? "加入生成队列" : studioMode === "text-edit" ? "开始改字" : studioMode === "product-blend" ? "开始溶图" : "开始生成"}
+          disabled={(studioMode === "text-edit" && (recognizingText || !textEditImage || !hasPendingReplacement(textRegions))) || (studioMode === "product-blend" && (!productBlendImage || !isValidProductBox(productBlendBox))) || (studioMode === "image-upscale" && !attachments[0])}
+          aria-label={busy ? "加入生成队列" : studioMode === "text-edit" ? "开始改字" : studioMode === "product-blend" ? "开始溶图" : studioMode === "image-upscale" ? "开始放大" : "开始生成"}
           onClick={() => void send()}
         >
           <span aria-hidden>↑</span>
@@ -2160,12 +2207,24 @@ export default function Home() {
                         window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
                         return;
                       }
+                      if (turn.mode === "image-upscale") {
+                        const sourceImage = turn.images[0]
+                          ? { name: `继续放大-${turn.attachments?.[0]?.name || "图片"}`, data: turn.images[0] }
+                          : turn.attachments?.[0];
+                        setStudioMode("image-upscale");
+                        setAttachments(sourceImage ? [sourceImage] : []);
+                        setRatioName("智能");
+                        setResolution(turn.resolution === "4K" ? "4K" : "2K");
+                        setError("");
+                        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+                        return;
+                      }
                       setPrompt(turn.prompt);
                       setAttachments(turn.attachments || []);
                       promptInput.current?.focus();
                     }}
                   >
-                    {turn.mode === "text-edit" ? "继续改字" : turn.mode === "product-blend" ? "继续溶图" : "重新编辑"}
+                    {turn.mode === "text-edit" ? "继续改字" : turn.mode === "product-blend" ? "继续溶图" : turn.mode === "image-upscale" ? "继续放大" : "重新编辑"}
                   </button>
                   <button onClick={() => void send(turn)}>再次生成</button>
                   {turn.images.length > 0 && (
@@ -2498,6 +2557,7 @@ function GenerationHeader({
     | "apiSource"
     | "generationDurationMs"
     | "queueWaitMs"
+    | "mode"
   > & { createdAt?: number };
   onReferenceClick?: (references: Attachment[]) => void;
 }) {
@@ -2546,7 +2606,7 @@ function GenerationHeader({
         </div>
       )}
       <div className="generation-description">
-        <strong>{turn.prompt}</strong>
+        <strong>{turn.mode === "image-upscale" ? "图片放大" : turn.prompt}</strong>
         <span>
           {turn.modelName || "图片模型"}
           <i /> {turn.ratioName || "智能比例"}

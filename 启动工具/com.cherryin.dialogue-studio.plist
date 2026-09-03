@@ -19,6 +19,10 @@
   <dict>
     <key>CHERRYIN_STUDIO_ROOT</key>
     <string>/Users/xieyingjun/Documents/画室</string>
+    <key>HTTP_PROXY</key>
+    <string>http://127.0.0.1:10811</string>
+    <key>HTTPS_PROXY</key>
+    <string>http://127.0.0.1:10811</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

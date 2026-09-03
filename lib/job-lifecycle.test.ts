@@ -18,6 +18,10 @@ test("product blend is a persisted studio mode", () => {
   assert.equal(normalizeStudioMode("product-blend"), "product-blend");
 });
 
+test("image upscale is a persisted studio mode", () => {
+  assert.equal(normalizeStudioMode("image-upscale"), "image-upscale");
+});
+
 test("product blend supports the selected image count while text edit stays single", () => {
   assert.equal(supportsMultipleImages("generate"), true);
   assert.equal(supportsMultipleImages("product-blend"), true);
@@ -25,6 +29,11 @@ test("product blend supports the selected image count while text edit stays sing
   assert.equal(generationCountForMode("product-blend", 4), 4);
   assert.equal(generationCountForMode("generate", 3), 3);
   assert.equal(generationCountForMode("text-edit", 4), 1);
+});
+
+test("image upscale keeps the selected image count", () => {
+  assert.equal(supportsMultipleImages("image-upscale"), true);
+  assert.equal(generationCountForMode("image-upscale", 4), 4);
 });
 
 test("page unload preserves the active job without recording cancellation", () => {

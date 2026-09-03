@@ -1,7 +1,27 @@
-import { Agent } from "undici";
+import { Agent, EnvHttpProxyAgent, type Dispatcher } from "undici";
+
+type ProxyEnvironment = Record<string, string | undefined>;
+
+export function apilioProxyOptions(environment: ProxyEnvironment) {
+  const httpsProxy = environment.HTTPS_PROXY || environment.https_proxy || environment.HTTP_PROXY || environment.http_proxy;
+  const httpProxy = environment.HTTP_PROXY || environment.http_proxy || httpsProxy;
+  if (!httpsProxy && !httpProxy) return null;
+  const noProxy = environment.NO_PROXY || environment.no_proxy;
+  return {
+    httpsProxy: httpsProxy || httpProxy!,
+    httpProxy: httpProxy || httpsProxy!,
+    ...(noProxy ? { noProxy } : {}),
+  };
+}
 
 const generationTimeout = 600_000;
-const apilioAgent = new Agent(providerFetchTimeouts("Apilio"));
+const configuredApilioProxy = apilioProxyOptions(process.env);
+const apilioAgent: Dispatcher = configuredApilioProxy
+  ? new EnvHttpProxyAgent({
+      ...configuredApilioProxy,
+      ...providerFetchTimeouts("Apilio"),
+    })
+  : new Agent(providerFetchTimeouts("Apilio"));
 const internalGenerationAgent = new Agent(internalGenerationFetchTimeouts());
 
 export function internalGenerationFetchTimeouts() {
@@ -22,7 +42,7 @@ export async function providerFetch(
     return await fetch(input, {
       ...init,
       ...(providerName === "Apilio" ? { dispatcher: apilioAgent } : {}),
-    } as RequestInit & { dispatcher?: Agent });
+    } as RequestInit & { dispatcher?: Dispatcher });
   } catch (error) {
     throw new Error(readableFetchError(error, providerName), { cause: error });
   }
