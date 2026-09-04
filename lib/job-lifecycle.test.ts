@@ -1,12 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
+import * as jobLifecycle from "./job-lifecycle.ts";
+
+const {
   decideJobTermination,
   generationCountForMode,
   generationTiming,
   normalizeStudioMode,
   supportsMultipleImages,
-} from "./job-lifecycle.ts";
+} = jobLifecycle;
+
+test("Apilio partial results warn that missing images may exist upstream", () => {
+  const partialGenerationMessage = Reflect.get(jobLifecycle, "partialGenerationMessage");
+  assert.equal(typeof partialGenerationMessage, "function");
+  assert.equal(
+    partialGenerationMessage("apilio", 3, 1),
+    "请求 3 张，画室收到 1 张；另外 2 张可能已在 Apilio 后台生成，但结果回传失败。请先检查后台，未自动重试以避免重复扣费。",
+  );
+});
 
 test("old jobs without a mode remain image generation jobs", () => {
   assert.equal(normalizeStudioMode(undefined), "generate");

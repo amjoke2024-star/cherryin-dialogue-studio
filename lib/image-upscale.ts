@@ -1,4 +1,27 @@
 type UpscaleReference = { name: string; data: string };
+type UpscaleModel = { id: string; name: string; note: string; mark: string };
+
+const imageUpscaleDefaultModel = "gemini-3.1-flash-image-preview-4k";
+const imageUpscaleDefaultModelOption: UpscaleModel = {
+  id: imageUpscaleDefaultModel,
+  name: "Gemini 3.1 Flash Image Preview 4k",
+  note: "Apilio · 图片放大默认模型",
+  mark: "⚡",
+};
+
+export function imageUpscaleModelOptions(models: UpscaleModel[]) {
+  return models.some(
+    (model) => model.id.toLowerCase().replace(/^google\//, "") === imageUpscaleDefaultModel,
+  )
+    ? models
+    : [imageUpscaleDefaultModelOption, ...models];
+}
+
+export function preferredImageUpscaleModel(models: Array<{ id: string }>) {
+  return imageUpscaleModelOptions(models as UpscaleModel[]).find(
+    (model) => model.id.toLowerCase().replace(/^google\//, "") === imageUpscaleDefaultModel,
+  )?.id || "";
+}
 
 export function prepareImageUpscaleInput(source: UpscaleReference) {
   return {

@@ -22,6 +22,17 @@ export function generationCountForMode(mode: StudioMode, requestedCount: number)
     : 1;
 }
 
+export function partialGenerationMessage(
+  apiSource: string,
+  requestedCount: number,
+  completedCount: number,
+) {
+  const missingCount = Math.max(0, requestedCount - completedCount);
+  if (apiSource === "apilio")
+    return `请求 ${requestedCount} 张，画室收到 ${completedCount} 张；另外 ${missingCount} 张可能已在 Apilio 后台生成，但结果回传失败。请先检查后台，未自动重试以避免重复扣费。`;
+  return `请求 ${requestedCount} 张，实际成功 ${completedCount} 张。已保留成功结果，未自动重试以避免重复扣费。`;
+}
+
 export function decideJobTermination(input: JobTerminationInput) {
   if (input.pageUnloading)
     return { preserveWork: true, recordCancelled: false };

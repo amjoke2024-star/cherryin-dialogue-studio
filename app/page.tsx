@@ -17,6 +17,7 @@ import {
   decideJobTermination,
   generationCountForMode,
   generationTiming,
+  partialGenerationMessage,
   supportsMultipleImages,
   type StudioMode,
 } from "../lib/job-lifecycle";
@@ -56,7 +57,11 @@ import {
   type ApiSource,
 } from "../lib/api-providers";
 import { downloadImageBatch } from "../lib/batch-download";
-import { prepareImageUpscaleInput } from "../lib/image-upscale";
+import {
+  imageUpscaleModelOptions,
+  preferredImageUpscaleModel,
+  prepareImageUpscaleInput,
+} from "../lib/image-upscale";
 
 type Attachment = { name: string; data: string; transient?: boolean; role?: "mask" };
 type TextEditState = { sourceImage: Attachment; regions: TextRegion[] };
@@ -645,9 +650,17 @@ export default function Home() {
               );
             } catch {}
           }
-          setModelOptions(data.models);
-          if (!data.models.some((item) => item.id === model))
-            setModel(preferredModelFor(apiSource, data.models));
+          const nextModelOptions = apiSource === "apilio" && studioMode === "image-upscale"
+            ? imageUpscaleModelOptions(data.models)
+            : data.models;
+          setModelOptions(nextModelOptions);
+          const upscaleDefault = apiSource === "apilio" && studioMode === "image-upscale"
+            ? preferredImageUpscaleModel(nextModelOptions)
+            : "";
+          if (upscaleDefault)
+            setModel(upscaleDefault);
+          else if (!nextModelOptions.some((item) => item.id === model))
+            setModel(preferredModelFor(apiSource, nextModelOptions));
         }
       } catch {}
     }, 450);
@@ -974,6 +987,10 @@ export default function Home() {
       setRatioName("智能");
       setSize(ratios[0].value);
       if (resolution === "1K") setResolution("2K");
+      selectApiSource("apilio");
+      const upscaleOptions = imageUpscaleModelOptions(apilioModels);
+      setModelOptions(upscaleOptions);
+      setModel(preferredImageUpscaleModel(upscaleOptions));
     }
     if ((next === "text-edit" || next === "product-blend") && apiSource === "bfl") {
       const nextSource: ApiSource = apilioApiKey.trim() ? "apilio" : "cherryin";
@@ -1436,7 +1453,11 @@ export default function Home() {
       setTurns((current) => persistHistory([...current, turn]));
       if (completedCount < (job.count || 1))
         setError(
-          `请求 ${job.count || 1} 张，实际成功 ${completedCount} 张。已保留成功结果，未自动重试以避免重复扣费。`,
+          partialGenerationMessage(
+            job.apiSource || sourceForModel(job.modelId),
+            job.count || 1,
+            completedCount,
+          ),
         );
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === "AbortError";
