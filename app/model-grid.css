@@ -13,6 +13,7 @@
 }
 
 .model-popover .model-option {
+  height: 66px;
   min-width: 0;
   position: relative;
   grid-template-columns: 40px minmax(0, 1fr);
@@ -65,9 +66,14 @@
 }
 
 .model-popover .model-option strong {
+  min-height: 2.3em;
+  display: -webkit-box;
   overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.15;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
   font-size: 13px;
   letter-spacing: -0.18px;
 }

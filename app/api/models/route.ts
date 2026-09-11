@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiProvider, type ApiSource } from "../../../lib/api-providers";
+import {
+  apilioPriceNote,
+  type ApilioPricingCatalog,
+} from "../../../lib/apilio-model-pricing";
 
 type UpstreamModel = {
   id?: string;
@@ -24,6 +28,21 @@ export async function POST(request: NextRequest) {
     const provider = apiProvider(apiSource);
     const providerName = provider.name;
     const baseURL = provider.baseURL;
+    const pricingPromise = apiSource === "apilio"
+      ? fetch(`${baseURL}/api/models/price`, {
+          headers: { Accept: "application/json" },
+          next: { revalidate: 300 },
+          signal: AbortSignal.timeout(20_000),
+        })
+          .then(async (pricingResponse) => {
+            if (!pricingResponse.ok) return null;
+            const pricing = await pricingResponse.json() as {
+              data?: ApilioPricingCatalog;
+            };
+            return pricing.data || null;
+          })
+          .catch(() => null)
+      : Promise.resolve(null);
     const response = await fetch(`${baseURL}/v1/models`, {
       headers: { Authorization: `Bearer ${apiKey.trim()}`, Accept: "application/json" },
       cache: "no-store",
@@ -31,13 +50,22 @@ export async function POST(request: NextRequest) {
     });
     const raw = await response.json().catch(() => ({})) as { data?: UpstreamModel[]; models?: UpstreamModel[]; error?: { message?: string } };
     if (!response.ok) return NextResponse.json({ error: raw.error?.message || `无法读取 ${providerName} 模型列表` }, { status: response.status });
+    const pricingCatalog = await pricingPromise;
     const source = Array.isArray(raw.data) ? raw.data : Array.isArray(raw.models) ? raw.models : [];
     const models = Array.from(new Map(source.filter((item) => isImageModel(item) && Boolean(item.id || item.name)).map((item) => {
       const id = String(item.id || item.name);
       return [id, {
         id,
         name: displayName(id),
-        note: item.owned_by ? `${providerName} · ${item.owned_by}` : `${providerName} 图片模型`,
+        note: apiSource === "apilio"
+          ? apilioPriceNote(
+              item.owned_by ? `${providerName} · ${item.owned_by}` : `${providerName} 图片模型`,
+              id,
+              pricingCatalog,
+            )
+          : item.owned_by
+            ? `${providerName} · ${item.owned_by}`
+            : `${providerName} 图片模型`,
         mark: "◇",
       }] as const;
     })).values()).sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
