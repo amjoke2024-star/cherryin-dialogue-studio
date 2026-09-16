@@ -1078,9 +1078,31 @@
 
 .result-image-frame {
   position: relative;
+  aspect-ratio: 4 / 3;
   overflow: hidden;
   background: #1c1f25;
   cursor: zoom-in;
+}
+
+.result-load-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  color: #a5adb9;
+  font-size: 14px;
+}
+
+.result-load-message button {
+  padding: 9px 16px;
+  border: 1px solid #545d6b;
+  border-radius: 8px;
+  background: #292f39;
+  color: #f1f3f6;
+  cursor: pointer;
 }
 
 .result-grid .generated-result figcaption,

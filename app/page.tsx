@@ -9,6 +9,7 @@ import {
 } from "react";
 import "./model-grid.css";
 import "./product-blend.css";
+import GeneratedResult from "./components/GeneratedResult";
 import TextEditWorkspace from "./components/TextEditWorkspace";
 import ProductBlendWorkspace from "./components/ProductBlendWorkspace";
 import { recognizeImageText, terminateOcr } from "../lib/browser-ocr";
@@ -2004,7 +2005,7 @@ export default function Home() {
                 }}
               >
                 {turn.images[0] ? (
-                  <img src={turn.images[0]} alt="" />
+                  <img src={turn.images[0].replace(/^\/generated\//, "/api/image-preview/")} alt="" loading="lazy" decoding="async" />
                 ) : (
                   <i>✦</i>
                 )}
@@ -2499,54 +2500,6 @@ export default function Home() {
   );
 }
 
-function GeneratedResult({
-  src,
-  alt,
-  downloadName,
-  onOpen,
-  statusLabel,
-}: {
-  src: string;
-  alt: string;
-  downloadName: string;
-  onOpen: () => void;
-  statusLabel?: string;
-}) {
-  const [dimensions, setDimensions] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
-  return (
-    <figure className="generated-result">
-      <div className="result-image-frame" onClick={onOpen}>
-        <img
-          src={src}
-          alt={alt}
-          onLoad={(event) =>
-            setDimensions({
-              width: event.currentTarget.naturalWidth,
-              height: event.currentTarget.naturalHeight,
-            })
-          }
-        />
-        {statusLabel && <b className="result-status-label">{statusLabel}</b>}
-        <a
-          href={src}
-          download={downloadName}
-          onClick={(event) => event.stopPropagation()}
-        >
-          下载
-        </a>
-      </div>
-      <figcaption>
-        {dimensions
-          ? `${dimensions.width} × ${dimensions.height} px`
-          : "读取分辨率…"}
-      </figcaption>
-    </figure>
-  );
-}
-
 function BalanceLink({
   label,
   onClick,
@@ -2619,8 +2572,10 @@ function GenerationHeader({
           {references.slice(0, 3).map((item, index) => (
             <img
               key={`${item.name}-${index}`}
-              src={item.data}
+              src={item.data.replace(/^\/generated\//, "/api/image-preview/")}
               alt={item.name}
+              loading="lazy"
+              decoding="async"
             />
           ))}
           <span>“</span>
