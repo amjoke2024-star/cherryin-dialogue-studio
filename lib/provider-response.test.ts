@@ -32,3 +32,8 @@ test("a response-body interruption reports the 4K edit stage and request id", as
     /Apilio 图片编辑已收到响应头.*读取响应正文中断.*gpt-image-2-4k.*2480x3312.*req-4k-789.*153000ms/,
   );
 });
+
+test("reads Apilio's One API request ID", async () => {
+  const { providerRequestId } = await import("./provider-response.ts");
+  assert.equal(providerRequestId(new Headers({ "x-oneapi-request-id": "apilio-test-id" })), "apilio-test-id");
+});

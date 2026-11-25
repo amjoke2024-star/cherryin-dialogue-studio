@@ -69,6 +69,51 @@ test("Apilio Gemini image aliases with resolution suffixes use the Gemini payloa
   }
 });
 
+test("Apilio adaptive resolution preserves the ratio-derived size for a native-resolution model", () => {
+  assert.deepEqual(
+    buildImageGenerationPayload({
+      providerName: "Apilio",
+      model: "gpt-image-2.5-sunburst-2k",
+      prompt: "native resolution",
+      size: "2048x1360",
+      quality: "medium",
+      count: 1,
+      responseFormat: "url",
+      adaptiveResolution: true,
+    }),
+    {
+      model: "gpt-image-2.5-sunburst-2k",
+      prompt: "native resolution",
+      n: 1,
+      response_format: "url",
+      quality: "medium",
+      size: "2048x1360",
+    },
+  );
+});
+
+test("Apilio adaptive resolution does not invent a size for a model without a resolution suffix", () => {
+  assert.deepEqual(
+    buildImageGenerationPayload({
+      providerName: "Apilio",
+      model: "gpt-image-2.5-sunburst",
+      prompt: "native default",
+      size: undefined,
+      quality: "medium",
+      count: 1,
+      responseFormat: "url",
+      adaptiveResolution: true,
+    }),
+    {
+      model: "gpt-image-2.5-sunburst",
+      prompt: "native default",
+      n: 1,
+      response_format: "url",
+      quality: "medium",
+    },
+  );
+});
+
 test("non-Gemini image models keep the existing OpenAI-compatible payload", () => {
   assert.deepEqual(
     buildImageGenerationPayload({

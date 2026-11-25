@@ -6,6 +6,16 @@ type ImageGenerationPayloadOptions = {
   quality: string;
   count: number;
   responseFormat: "url" | "b64_json";
+  adaptiveResolution?: boolean;
+};
+
+type ImageGenerationPayload = {
+  model: string;
+  prompt: string;
+  n: number;
+  response_format: "url" | "b64_json";
+  size?: string;
+  quality?: string;
 };
 
 const geminiRatios: Array<[string, number]> = [
@@ -32,7 +42,8 @@ export function buildImageGenerationPayload({
   quality,
   count,
   responseFormat,
-}: ImageGenerationPayloadOptions) {
+  adaptiveResolution = false,
+}: ImageGenerationPayloadOptions): ImageGenerationPayload {
   const providerModel = resolveProviderImageModel(providerName, model, size);
   const base = {
     model: providerModel,
@@ -41,11 +52,17 @@ export function buildImageGenerationPayload({
     response_format: responseFormat,
   };
 
+  if (providerName === "Apilio" && adaptiveResolution && !size)
+    return { ...base, quality };
+
   if (providerName === "Apilio" && isGeminiImageModel(model)) {
     const { aspectRatio, imageSize } = geminiOutputConfig(size);
     const compatibleQuality = imageSize === "2K" ? "high" : imageSize === "1K" ? "medium" : imageSize;
     return { ...base, size: aspectRatio, quality: compatibleQuality };
   }
+
+  if (providerName === "Apilio" && adaptiveResolution)
+    return { ...base, quality, size };
 
   return { ...base, quality, ...(size ? { size } : {}) };
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiProvider, type ApiSource } from "../../../lib/api-providers";
 import {
   apilioPriceNote,
+  apilioFixedUnitPrice,
+  apilioDefaultUnitPrice,
   type ApilioPricingCatalog,
 } from "../../../lib/apilio-model-pricing";
 
@@ -54,6 +56,10 @@ export async function POST(request: NextRequest) {
     const source = Array.isArray(raw.data) ? raw.data : Array.isArray(raw.models) ? raw.models : [];
     const models = Array.from(new Map(source.filter((item) => isImageModel(item) && Boolean(item.id || item.name)).map((item) => {
       const id = String(item.id || item.name);
+      const fixedPrice = apiSource === "apilio" ? apilioFixedUnitPrice(id, pricingCatalog) : undefined;
+      const defaultPrice = apiSource === "apilio" && fixedPrice === undefined
+        ? apilioDefaultUnitPrice(id, pricingCatalog)
+        : undefined;
       return [id, {
         id,
         name: displayName(id),
@@ -67,6 +73,8 @@ export async function POST(request: NextRequest) {
             ? `${providerName} · ${item.owned_by}`
             : `${providerName} 图片模型`,
         mark: "◇",
+        fixedUnitPrice: fixedPrice ?? defaultPrice,
+        estimatedPricingGroup: defaultPrice === undefined ? undefined : "default" as const,
       }] as const;
     })).values()).sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
     return NextResponse.json({ models });

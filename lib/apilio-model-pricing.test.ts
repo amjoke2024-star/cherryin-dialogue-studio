@@ -60,3 +60,16 @@ test("an unavailable or token-priced model keeps its original note", () => {
     "Apilio · custom",
   );
 });
+
+test("estimates only a fixed price that is shared by all listed groups", async () => {
+  const { apilioFixedUnitPrice } = await import("./apilio-model-pricing.ts");
+  assert.equal(apilioFixedUnitPrice("test", { models: [{
+    key: "test", group_price: { default: { type: 1, price: .1, group_ratio: 1 } },
+  }] }), .1);
+  assert.equal(apilioFixedUnitPrice("test", { models: [{
+    key: "test", group_price: {
+      default: { type: 1, price: .1, group_ratio: 1 },
+      alternate: { type: 1, price: .1, group_ratio: 2 },
+    },
+  }] }), undefined);
+});

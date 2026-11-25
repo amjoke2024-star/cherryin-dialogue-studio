@@ -104,3 +104,11 @@ test("older jobs without a server start timestamp keep their total duration", ()
     generationDurationMs: 9_000,
   });
 });
+
+test("missing-image counts use the original request and exclude uncertain tasks", async () => {
+  const { missingImageCount } = await import("./job-lifecycle.ts");
+  assert.equal(missingImageCount({ images: ["a", "b", "c"], requestedCount: 4 }), 1);
+  assert.equal(missingImageCount({ images: ["a", "b"], error: "请求 3 张，画室收到 2 张。" }), 1);
+  assert.equal(missingImageCount({ images: ["a"], requestedCount: 2, status: "unconfirmed" }), 0);
+  assert.equal(missingImageCount({ images: [], requestedCount: 4 }), 0);
+});

@@ -83,26 +83,37 @@ export function providerFetchTimeouts(providerName: string) {
   return { headersTimeout: timeout, bodyTimeout: timeout };
 }
 
+const responseDiagnostics = new WeakMap<Response, string>();
+
+export function providerResponseDiagnostic(response: Response) {
+  return responseDiagnostics.get(response) || "";
+}
+
 export async function providerFetch(
   input: string,
   init: RequestInit,
   providerName: string,
+  operation = "调用上游",
 ) {
+  const apilioRoute = providerName === "Apilio"
+    ? await apilioRouteSelector.select()
+    : null;
+  const dispatcher = apilioRoute === "direct"
+    ? directApilioAgent
+    : apilioRoute === "proxy"
+      ? proxyApilioAgent || directApilioAgent
+      : undefined;
+  const route = apilioRoute === "direct" ? "直连" : apilioRoute === "proxy" ? "代理" : "默认网络";
+  const context = `${operation} · ${route}`;
   try {
-    const apilioRoute = providerName === "Apilio"
-      ? await apilioRouteSelector.select()
-      : null;
-    const dispatcher = apilioRoute === "direct"
-      ? directApilioAgent
-      : apilioRoute === "proxy"
-        ? proxyApilioAgent || directApilioAgent
-        : undefined;
-    return await fetch(input, {
+    const response = await fetch(input, {
       ...init,
       ...(dispatcher ? { dispatcher } : {}),
     } as RequestInit & { dispatcher?: Dispatcher });
+    responseDiagnostics.set(response, `${context} · HTTP ${response.status}`);
+    return response;
   } catch (error) {
-    throw new Error(readableFetchError(error, providerName), { cause: error });
+    throw new Error(`${context}：${readableFetchError(error, providerName)}`, { cause: error });
   }
 }
 

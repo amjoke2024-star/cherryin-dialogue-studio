@@ -7,7 +7,8 @@ export type ProviderResponseContext = {
 };
 
 export function providerRequestId(headers: Headers) {
-  return headers.get("x-request-id")
+  return headers.get("x-oneapi-request-id")
+    || headers.get("x-request-id")
     || headers.get("request-id")
     || headers.get("cf-ray")
     || "";

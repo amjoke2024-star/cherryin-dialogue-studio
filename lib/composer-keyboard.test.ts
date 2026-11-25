@@ -15,6 +15,6 @@ test("the prompt composer only submits from the send button", async () => {
   assert.doesNotMatch(pageSource, /<textarea[\s\S]*?onKeyDown=\{keyDown\}/);
   assert.match(
     pageSource,
-    /aria-label=\{busy \? "加入生成队列"[\s\S]*?onClick=\{\(\) => void send\(\)\}/,
+    /<button(?:(?!<button)[\s\S])*?"开始生成"(?:(?!<button)[\s\S])*?onClick=\{\(\) => void send\(\)\}/,
   );
 });

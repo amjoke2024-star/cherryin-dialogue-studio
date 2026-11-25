@@ -54,16 +54,42 @@ test("a permanently missing restored job is returned as missing", async () => {
 
 test("repeated status failures stop after the safe read-only retry budget", async () => {
   let reads = 0;
-  await assert.rejects(
-    waitForJobStatus({
+  const result = await waitForJobStatus({
       read: async () => {
         reads += 1;
         throw new TypeError("fetch failed");
       },
       sleep: async () => {},
       transientRetryLimit: 3,
-    }),
-    /fetch failed/,
-  );
+  });
+  assert.equal(result.status, "unavailable");
+  assert.equal(result.error, "fetch failed");
   assert.equal(reads, 4);
+});
+
+test("a status outage preserves previously received images", async () => {
+  let readOnce = false;
+  const result = await waitForJobStatus({
+    read: async () => {
+      if (readOnce) throw new Error("offline");
+      readOnce = true;
+      return { status: "running", images: ["/generated/already-saved.png"] };
+    },
+    sleep: async () => {},
+    transientRetryLimit: 1,
+  });
+  assert.equal(result.status, "unavailable");
+  assert.deepEqual(result.images, ["/generated/already-saved.png"]);
+});
+
+test("an interrupted server job stops polling so recovery can take over", async () => {
+  let reads = 0;
+  const result = await waitForJobStatus({
+    read: async () => ++reads === 1
+      ? { status: "interrupted", recoverable: true }
+      : { status: "failed" },
+    sleep: async () => {},
+  });
+  assert.equal(result.status, "interrupted");
+  assert.equal(reads, 1);
 });

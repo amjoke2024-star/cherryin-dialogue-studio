@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export default function GeneratedResult({ src, alt, downloadName, onOpen, statusLabel }: {
-  src: string; alt: string; downloadName: string; onOpen: () => void; statusLabel?: string;
+export default function GeneratedResult({ src, alt, downloadName, onOpen, onUseReference, statusLabel }: {
+  src: string; alt: string; downloadName: string; onOpen: () => void; onUseReference?: () => void; statusLabel?: string;
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -85,6 +85,12 @@ export default function GeneratedResult({ src, alt, downloadName, onOpen, status
           {state === "idle" ? "图片待加载" : "图片加载中…"}
         </div>}
         {statusLabel && <b className="result-status-label">{statusLabel}</b>}
+        {onUseReference && (
+          <button type="button" className="result-use-reference" onClick={(event) => {
+            event.stopPropagation();
+            onUseReference();
+          }}>用作参考</button>
+        )}
         <a href={src} download={downloadName} onClick={(event) => event.stopPropagation()}>下载</a>
       </div>
       <figcaption>{state === "error" ? "可重试加载，或点击查看原图" : dimensions

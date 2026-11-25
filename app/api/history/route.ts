@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
+import { retainStudioHistory } from "../../../lib/studio-history";
 import { studioPath } from "../../../lib/studio-paths";
 
 export const runtime = "nodejs";
@@ -13,6 +14,7 @@ type HistoryTurn = {
   images: string[];
   createdAt: number;
   attachments?: Attachment[];
+  favorite?: boolean;
   [key: string]: unknown;
 };
 
@@ -32,7 +34,7 @@ function validTurn(value: unknown): value is HistoryTurn {
 async function readHistory() {
   try {
     const parsed = JSON.parse(await readFile(historyFile, "utf8")) as unknown;
-    return Array.isArray(parsed) ? parsed.filter(validTurn).slice(-60) : [];
+    return Array.isArray(parsed) ? retainStudioHistory(parsed.filter(validTurn)) : [];
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
@@ -40,7 +42,7 @@ async function readHistory() {
 }
 
 async function writeHistory(items: HistoryTurn[]) {
-  const safeItems = items.filter(validTurn).slice(-60);
+  const safeItems = retainStudioHistory(items.filter(validTurn));
   writeQueue = writeQueue.then(async () => {
     await mkdir(historyDirectory, { recursive: true });
     const temporaryFile = `${historyFile}.${process.pid}.tmp`;

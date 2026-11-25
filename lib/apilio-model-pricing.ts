@@ -9,17 +9,40 @@ export type ApilioPricingCatalog = {
   }>;
 };
 
+function findPricingModel(modelId: string, catalog?: ApilioPricingCatalog | null) {
+  const normalizedId = modelId.toLowerCase();
+  const shortId = normalizedId.split("/").pop();
+  return catalog?.models?.find((item) => item.key?.toLowerCase() === normalizedId)
+    || catalog?.models?.find((item) => item.key?.toLowerCase() === shortId);
+}
+
+export function apilioFixedUnitPrice(modelId: string, catalog?: ApilioPricingCatalog | null) {
+  const model = findPricingModel(modelId, catalog);
+  if (!model || model.ratios?.ratios?.length) return undefined;
+  const prices = Object.values(model.group_price || {}).map(fixedGroupPrice);
+  const first = prices[0];
+  return first !== undefined && prices.every((price) => price === first) ? first : undefined;
+}
+
+export function apilioDefaultUnitPrice(modelId: string, catalog?: ApilioPricingCatalog | null) {
+  const model = findPricingModel(modelId, catalog);
+  if (!model || model.ratios?.ratios?.length) return undefined;
+  return fixedGroupPrice(model.group_price?.default);
+}
+
+function fixedGroupPrice(group?: { type?: number; price?: number; group_ratio?: number }) {
+  if (group?.type !== 1 || typeof group.price !== "number" || typeof group.group_ratio !== "number")
+    return undefined;
+  const total = group.price * group.group_ratio;
+  return total >= 0 && Number.isFinite(total) ? Number(total.toFixed(5)) : undefined;
+}
+
 export function apilioPriceNote(
   note: string,
   modelId: string,
   catalog?: ApilioPricingCatalog | null,
 ) {
-  const normalizedId = modelId.toLowerCase();
-  const shortId = normalizedId.split("/").pop();
-  const model = catalog?.models?.find((item) => {
-    const key = item.key?.toLowerCase();
-    return key === normalizedId || key === shortId;
-  });
+  const model = findPricingModel(modelId, catalog);
   const firstGroupPrice = Object.values(model?.group_price || {})[0];
   if (firstGroupPrice?.type !== 1) return note;
   const price = Number(firstGroupPrice.price);

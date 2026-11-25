@@ -9,16 +9,17 @@ import {
 } from "react";
 import "./model-grid.css";
 import "./product-blend.css";
+import { matchesStudioHistory, retainStudioHistory } from "../lib/studio-history";
 import GeneratedResult from "./components/GeneratedResult";
 import TextEditWorkspace from "./components/TextEditWorkspace";
 import ProductBlendWorkspace from "./components/ProductBlendWorkspace";
 import { recognizeImageText, terminateOcr } from "../lib/browser-ocr";
 import { createTextEditGuideImage } from "../lib/text-edit-guide";
 import {
-  decideJobTermination,
   generationCountForMode,
   generationTiming,
   partialGenerationMessage,
+  missingImageCount,
   supportsMultipleImages,
   type StudioMode,
 } from "../lib/job-lifecycle";
@@ -56,13 +57,20 @@ import {
   apiProviderModels,
   createLatestProviderRequestGate,
   type ApiSource,
+  type StudioModel,
 } from "../lib/api-providers";
 import { downloadImageBatch } from "../lib/batch-download";
+import { fitGptImage2Size, usesGptImage2SizeLimits } from "../lib/gpt-image-size";
 import {
   imageUpscaleModelOptions,
   preferredImageUpscaleModel,
   prepareImageUpscaleInput,
 } from "../lib/image-upscale";
+import {
+  availableResolutions,
+  modelSuffixResolution,
+  outputResolutionForSelection,
+} from "../lib/adaptive-resolution";
 
 type Attachment = { name: string; data: string; transient?: boolean; role?: "mask" };
 type TextEditState = { sourceImage: Attachment; regions: TextRegion[] };
@@ -79,9 +87,14 @@ type Turn = {
   size?: string;
   resolution?: string;
   count?: number;
+  requestedCount?: number;
+  supplementedJobs?: string[];
+  favorite?: boolean;
+  diagnostics?: string[];
+  quality?: string;
   attachments?: Attachment[];
   apiSource?: ApiSource;
-  status?: "completed" | "failed" | "cancelled";
+  status?: "completed" | "failed" | "cancelled" | "unconfirmed";
   error?: string;
   mode?: StudioMode;
   textEdit?: TextEditState;
@@ -97,9 +110,16 @@ type GenerationJob = Omit<
   submittedAt?: number;
   serverStartedAt?: number;
   referencesOmitted?: boolean;
+  receivedImages?: string[];
+  supplementFor?: string;
 };
 type SavedGenerationJob = Omit<GenerationJob, "apiKey">;
-const pendingPreviewId = "__pending__";
+type ActiveGeneration = {
+  job: GenerationJob;
+  images: string[];
+  hidden: boolean;
+  issue?: string;
+};
 
 const preferredModelStorageKey = (source: ApiSource) =>
   `dialogue-studio-default-model-${source}`;
@@ -123,7 +143,7 @@ function preferredModelFor(source: ApiSource, models: typeof fallbackModels) {
     : models[0]?.id || "";
 }
 
-const fallbackModels = [
+const fallbackModels: StudioModel[] = [
   {
     id: "openai/gpt-image-2",
     name: "GPT Image 2",
@@ -157,17 +177,27 @@ const fallbackModels = [
 ];
 const bflModels = [
   {
+    id: "bfl/flux-3-image",
+    name: "FLUX 3 Image",
+    note: "Black Forest Labs · 最新生成与编辑",
+    mark: "3",
+  },
+  {
     id: "bfl/flux-2-pro-preview",
-    name: "FLUX.2 Pro",
-    note: "Black Forest Labs · 日常默认",
+    name: "FLUX.2 Pro Preview",
+    note: "Black Forest Labs · 最新 Pro 预览",
     mark: "F",
   },
+  { id: "bfl/flux-2-pro", name: "FLUX.2 Pro", note: "Black Forest Labs · 稳定版本", mark: "P" },
   {
     id: "bfl/flux-2-max",
     name: "FLUX.2 Max",
     note: "Black Forest Labs · 最高质量",
     mark: "M",
   },
+  { id: "bfl/flux-2-flex", name: "FLUX.2 Flex", note: "Black Forest Labs · 文字与细节", mark: "F" },
+  { id: "bfl/flux-2-klein-9b-preview", name: "FLUX.2 Klein 9B Preview", note: "Black Forest Labs · 快速预览", mark: "K" },
+  { id: "bfl/flux-2-klein-9b", name: "FLUX.2 Klein 9B", note: "Black Forest Labs · 快速稳定", mark: "K" },
   {
     id: "bfl/flux-2-klein-4b",
     name: "FLUX.2 Klein 4B",
@@ -288,20 +318,8 @@ function outputSize(
 ) {
   // GPT Image 2 caps each edge at 3840px and the whole image at 8,294,400px.
   // Fit the nominal 4K selection inside both limits while keeping the ratio.
-  if (isGptImage2(modelId) && resolution === "4K") {
-    const maxEdge = 3840;
-    const maxPixels = 8_294_400;
-    const ratio = Math.min(3, Math.max(1 / 3, widthRatio / heightRatio));
-    if (ratio >= 1) {
-      const width =
-        Math.floor(Math.min(maxEdge, Math.sqrt(maxPixels * ratio)) / 16) * 16;
-      const height = Math.floor(width / ratio / 16) * 16;
-      return `${width}x${height}`;
-    }
-    const height =
-      Math.floor(Math.min(maxEdge, Math.sqrt(maxPixels / ratio)) / 16) * 16;
-    const width = Math.floor((height * ratio) / 16) * 16;
-    return `${width}x${height}`;
+  if (usesGptImage2SizeLimits(modelId) && resolution === "4K") {
+    return fitGptImage2Size(widthRatio / heightRatio);
   }
   const edge = resolution === "4K" ? 4096 : resolution === "2K" ? 2048 : 1024;
   const align = (value: number) => Math.max(16, Math.round(value / 16) * 16);
@@ -374,21 +392,23 @@ export default function Home() {
   const [ratioName, setRatioName] = useState("智能");
   const [quality, setQuality] = useState("medium");
   const [resolution, setResolution] = useState("2K");
+  const modelResolution = isBflModel(model) ? undefined : modelSuffixResolution(model);
+  const selectedResolution = modelResolution || resolution;
   const [count, setCount] = useState(1);
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [partialImages, setPartialImages] = useState<string[]>([]);
-  const [pendingHidden, setPendingHidden] = useState(false);
-  const [pending, setPending] = useState<GenerationJob | null>(null);
-  const [queued, setQueued] = useState<GenerationJob[]>([]);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const turnsRef = useRef<Turn[]>([]);
+  const [activeGenerations, setActiveGenerations] = useState<ActiveGeneration[]>([]);
+  const busy = activeGenerations.length > 0;
   const [error, setError] = useState("");
+  const [diagnosticCopied, setDiagnosticCopied] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [panel, setPanel] = useState<
     "model" | "format" | "mentions" | "settings" | null
   >(null);
   const [actionMenu, setActionMenu] = useState<string | null>(null);
-  const [recentMenu, setRecentMenu] = useState<string | null>(null);
+  const [recentMenu, setRecentMenu] = useState<{ id: string; top: number; right: number } | null>(null);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [preview, setPreview] = useState<{
     turnId: string;
@@ -405,11 +425,9 @@ export default function Home() {
   const conversationEnd = useRef<HTMLDivElement>(null);
   const initialBottomPositioned = useRef(false);
   const restoredScrollTop = useRef<number | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const pageUnloadingRef = useRef(false);
-  const explicitCancelRef = useRef(false);
-  const processingRef = useRef(false);
-  const queueRef = useRef<GenerationJob[]>([]);
+  const activeJobsRef = useRef(new Map<string, GenerationJob>());
+  const checkingJobsRef = useRef(new Set<string>());
   const modelRequestGateRef = useRef(createLatestProviderRequestGate());
   const ocrRequestRef = useRef(0);
 
@@ -546,16 +564,12 @@ export default function Home() {
       } catch {}
       try {
         const response = await fetch("/api/history", { cache: "no-store" });
+        if (!response.ok) throw new Error("无法读取共享历史记录。");
         const data = (await response.json()) as { items?: Turn[] };
-        const combined = new Map<string, Turn>();
-        for (const turn of [...(data.items || []), ...localHistory])
-          combined.set(turn.id, turn);
-        const merged = Array.from(combined.values())
-          .sort((a, b) => a.createdAt - b.createdAt)
-          .slice(-60);
-        setTurns(persistHistory(merged));
+        saveTurns(mergeHistory(data.items || [], localHistory, turnsRef.current));
       } catch {
-        setTurns(persistHistory(localHistory));
+        turnsRef.current = retainStudioHistory(mergeHistory(localHistory, turnsRef.current));
+        setTurns(turnsRef.current);
       }
     })();
     try {
@@ -565,41 +579,22 @@ export default function Home() {
         pending?: SavedGenerationJob;
         queued?: SavedGenerationJob[];
       } | null;
-      const restoredQueue = (saved?.queued || []).map((job) => ({
-        ...job,
-        apiKey:
-          job.apiSource === "apilio"
+      const restore = (job: SavedGenerationJob | undefined) =>
+        restorePendingJob(
+          job,
+          job?.apiSource === "apilio"
             ? restoredApilioKey
-            : job.apiSource === "goapi"
+            : job?.apiSource === "goapi"
               ? restoredGoapiKey
-            : isBflModel(job.modelId)
-              ? restoredBflKey
-              : restoredKey,
-      }));
-      queueRef.current = restoredQueue;
-      setQueued(restoredQueue);
-      const pendingKey =
-        saved?.pending?.apiSource === "apilio"
-          ? restoredApilioKey
-          : saved?.pending?.apiSource === "goapi"
-            ? restoredGoapiKey
-          : isBflModel(saved?.pending?.modelId)
-            ? restoredBflKey
-            : restoredKey;
-      const restoredPending = restorePendingJob(saved?.pending, pendingKey);
-      if (restoredPending) {
-        window.setTimeout(
-          () => void runJob(restoredPending, true),
-          0,
+              : isBflModel(job?.modelId)
+                ? restoredBflKey
+                : restoredKey,
         );
-      } else if (restoredQueue.length && restoredQueue[0].apiKey) {
-        const first = restoredQueue[0];
-        queueRef.current = restoredQueue.slice(1);
-        setQueued(queueRef.current);
-        window.setTimeout(
-          () => void runJob(first, Boolean(first.serverStartedAt)),
-          0,
-        );
+      const restoredPending = restore(saved?.pending);
+      if (restoredPending) void runJob(restoredPending, true);
+      for (const savedJob of saved?.queued || []) {
+        const job = restore(savedJob);
+        if (job) void runJob(job, Boolean(job.serverStartedAt));
       }
     } catch {
       clearSavedWork();
@@ -722,9 +717,8 @@ export default function Home() {
       setPreview((current) => {
         if (!current) return null;
         const images =
-          current.turnId === pendingPreviewId
-            ? partialImages
-            : turns.find((item) => item.id === current.turnId)?.images;
+          activeGenerations.find(({ job }) => job.queueId === current.turnId)?.images ||
+          turns.find((item) => item.id === current.turnId)?.images;
         if (!images?.length) return null;
         return {
           ...current,
@@ -739,7 +733,7 @@ export default function Home() {
     };
     document.addEventListener("keydown", keyboard);
     return () => document.removeEventListener("keydown", keyboard);
-  }, [preview, turns, partialImages]);
+  }, [preview, turns, activeGenerations]);
   useEffect(() => {
     if (!referencePreview) return;
     const keyboard = (event: KeyboardEvent) => {
@@ -761,17 +755,6 @@ export default function Home() {
     document.addEventListener("keydown", keyboard);
     return () => document.removeEventListener("keydown", keyboard);
   }, [referencePreview]);
-  useEffect(() => {
-    if (!busy) return;
-    const timer = window.setInterval(
-      () =>
-        setProgress((value) =>
-          Math.min(92, value + (value < 40 ? 4 : value < 75 ? 2 : 1)),
-        ),
-      900,
-    );
-    return () => window.clearInterval(timer);
-  }, [busy]);
   useLayoutEffect(() => {
     if (!turns.length && !busy) return;
     const saved = restoredScrollTop.current;
@@ -785,7 +768,7 @@ export default function Home() {
       block: "end",
     });
     initialBottomPositioned.current = true;
-  }, [turns.length, busy, queued.length]);
+  }, [turns.length, busy, activeGenerations.length]);
 
   const activeModel = modelOptions.find((item) => item.id === model) ||
     modelOptions[0] || {
@@ -805,18 +788,28 @@ export default function Home() {
       }, new Map<string, { vendor: ModelVendor; models: typeof modelOptions }>())
       .values(),
   );
-  const previewTurn: Turn | null | undefined =
-    preview?.turnId === pendingPreviewId && pending
-      ? {
-          ...pending,
-          id: pendingPreviewId,
-          images: partialImages,
-          createdAt: pending.submittedAt || 0,
-        }
-      : preview
-        ? turns.find((item) => item.id === preview.turnId)
-        : null;
-  const latestTurns = [...turns].reverse().slice(0, 8);
+  const activePreview = activeGenerations.find(({ job }) => job.queueId === preview?.turnId);
+  const previewTurn = activePreview
+    ? { images: activePreview.images, createdAt: activePreview.job.submittedAt || 0 }
+    : turns.find((turn) => turn.id === preview?.turnId);
+  const conversationEntries = [
+    ...turns.map((turn) => ({ createdAt: turn.createdAt, turn })),
+    ...activeGenerations.filter(({ hidden }) => !hidden).map((active) => ({
+      createdAt: active.job.submittedAt || 0,
+      active,
+    })),
+  ].sort((first, second) => first.createdAt - second.createdAt);
+  const latestTurns = [...turns].reverse().filter((turn) =>
+    (!favoritesOnly || turn.favorite) && matchesStudioHistory(turn, historyQuery),
+  );
+  const estimateModelId = (studioMode === "text-edit" || studioMode === "product-blend") && !isGptImage2(model)
+    ? initialDefaultModels[apiSource === "bfl" ? "cherryin" : apiSource]
+    : model;
+  const estimateModel = apiSource === "apilio"
+    ? apilioModels.find((item) => item.id === estimateModelId)
+    : undefined;
+  const estimatedUnitPrice = estimateModel?.fixedUnitPrice;
+  const estimatedCount = generationCountForMode(studioMode, count);
   function saveKey(value: string) {
     setApiKey(value);
     localStorage.setItem("dialogue-studio-api-key", value);
@@ -847,7 +840,8 @@ export default function Home() {
           : cherryModels;
     setModelOptions(nextModels);
     setModel(preferredModelFor(source, nextModels));
-    if (source === "bfl" && resolution === "4K") setResolution("2K");
+    if (source !== "apilio" && resolution === "自适应") setResolution("2K");
+    else if (source === "bfl" && resolution === "4K") setResolution("2K");
   }
   function selectDefaultModel(modelId: string) {
     setModel(modelId);
@@ -1040,17 +1034,22 @@ export default function Home() {
     setProductBlendWorkspaceExpanded(true);
     setError("");
   }
+  function saveTurns(items: Turn[]) {
+    turnsRef.current = persistHistory(items);
+    setTurns(turnsRef.current);
+  }
   function deleteTurn(id: string) {
-    setTurns((current) => {
-      const next = current.filter((turn) => turn.id !== id);
-      return persistHistory(next);
-    });
+    saveTurns(turnsRef.current.filter((turn) => turn.id !== id));
     setActionMenu(null);
     setRecentMenu(null);
   }
+  function toggleFavorite(id: string) {
+    saveTurns(turnsRef.current.map((turn) =>
+      turn.id === id ? { ...turn, favorite: !turn.favorite } : turn,
+    ));
+  }
   function clearHistory() {
-    setTurns([]);
-    persistHistory([]);
+    saveTurns(turnsRef.current.filter((turn) => turn.favorite));
     setClearConfirm(false);
     setRecentMenu(null);
   }
@@ -1103,6 +1102,18 @@ export default function Home() {
     );
     setAttachments((current) => [...current, ...next].slice(0, 5));
     setError("");
+  }
+  function useResultAsReference(image: string, index: number) {
+    if (attachments.length >= 5 && !attachments.some((attachment) => attachment.data === image)) {
+      setError("最多添加 5 张参考图，请先移除一张。");
+      return;
+    }
+    switchStudioMode("generate");
+    setAttachments((current) => current.some((attachment) => attachment.data === image)
+      ? current
+      : [...current, { data: image, name: `生成图 ${index + 1}` }].slice(0, 5));
+    setPreview(null);
+    window.requestAnimationFrame(() => promptInput.current?.focus({ preventScroll: true }));
   }
   async function chooseFiles(event: ChangeEvent<HTMLInputElement>) {
     await addFiles(Array.from(event.target.files || []));
@@ -1191,7 +1202,57 @@ export default function Home() {
           });
       }),
   );
-  async function send(repeat?: Turn) {
+  const supplementRequestsRef = useRef(new Set<string>());
+
+  async function supplementImages(turn: Turn) {
+    const current = turnsRef.current.find((item) => item.id === turn.id);
+    const missing = current ? missingImageCount(current) : 0;
+    if (!current || !missing || supplementRequestsRef.current.has(turn.id) ||
+        [...activeJobsRef.current.values()].some((job) => job.supplementFor === turn.id)) return;
+    const source = current.apiSource || sourceForModel(current.modelId);
+    const pricedModel = source === "apilio"
+      ? apilioModels.find((item) => item.id === current.modelId)
+      : undefined;
+    const unitPrice = pricedModel?.fixedUnitPrice;
+    const estimate = unitPrice === undefined
+      ? "这次暂无可靠估价，可能产生费用。"
+      : `${pricedModel?.estimatedPricingGroup ? "默认组" : ""}预计 ¥${formatEstimate(unitPrice * missing)}（¥${formatEstimate(unitPrice)}/张）。`;
+    if (!window.confirm(`补生成 ${missing} 张？${estimate}已有图片会保留。补图是新的生成请求，请先确认上游没有尚未回传的结果。`)) return;
+    supplementRequestsRef.current.add(turn.id);
+    try {
+      await send(current, missing);
+    } finally {
+      supplementRequestsRef.current.delete(turn.id);
+    }
+  }
+
+  async function copyDiagnostics(task: {
+    jobId: string;
+    modelId?: string;
+    size?: string;
+    apiSource?: ApiSource;
+    createdAt?: number;
+    error?: string;
+    diagnostics?: string[];
+  }) {
+    const info = [
+      `画室任务：${task.jobId}`,
+      `时间：${task.createdAt ? new Date(task.createdAt).toISOString() : "未记录"}`,
+      `渠道：${task.apiSource || "未记录"}`,
+      `模型：${task.modelId || "未记录"}`,
+      `尺寸：${task.size || "未指定"}`,
+      `报错：${task.error || "未记录"}`,
+      ...(task.diagnostics || []).filter((detail) => detail !== task.error),
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(info);
+      setDiagnosticCopied(task.jobId);
+    } catch {
+      setError("无法访问剪贴板，请复制卡片上的报错文字。");
+    }
+  }
+
+  async function send(repeat?: Turn, supplementCount?: number) {
     const isTextEdit = repeat?.mode === "text-edit" || (!repeat && studioMode === "text-edit");
     const isProductBlend = repeat?.mode === "product-blend" || (!repeat && studioMode === "product-blend");
     const isImageUpscale = repeat?.mode === "image-upscale" || (!repeat && studioMode === "image-upscale");
@@ -1277,9 +1338,9 @@ export default function Home() {
     const runRatio = isProductBlend || isImageUpscale ? "智能" : repeat?.ratioName || ratioName;
     const requestedResolution = repeat?.resolution || resolution;
     const runResolution =
-      isBflModel(runModel) && requestedResolution === "4K"
-        ? "2K"
-        : requestedResolution;
+      isBflModel(runModel)
+        ? requestedResolution === "4K" ? "2K" : requestedResolution
+        : modelSuffixResolution(runModel) || requestedResolution;
     const runApiKey =
       runApiSource === "bfl"
         ? bflApiKey.trim()
@@ -1310,13 +1371,19 @@ export default function Home() {
     // Resolution is not just display metadata: turn it into the actual pixel size
     // sent to CherryIN. Recompute old repeated turns too, because older records
     // stored a 1024-based size even when their label said 2K.
-    const runSize =
-      runRatio === "智能"
-        ? await intelligentOutputSize(runAttachments, runResolution, runModel)
-        : fixedOutputSize(runRatio, runResolution, runModel);
+    const outputResolution = outputResolutionForSelection(
+      runApiSource,
+      runResolution,
+      runModel,
+    );
+    const runSize = supplementCount ? repeat?.size : !outputResolution
+      ? undefined
+      : runRatio === "智能"
+        ? await intelligentOutputSize(runAttachments, outputResolution, runModel)
+        : fixedOutputSize(runRatio, outputResolution, runModel);
     const runCount = generationCountForMode(
       isTextEdit ? "text-edit" : isProductBlend ? "product-blend" : isImageUpscale ? "image-upscale" : "generate",
-      repeat?.count || count,
+      supplementCount ?? (repeat?.count || count),
     );
     if (!runPrompt) {
       setError("请输入创作内容");
@@ -1336,7 +1403,8 @@ export default function Home() {
       queueId: crypto.randomUUID(),
       apiKey: runApiKey,
       apiSource: runApiSource,
-      quality,
+      quality: supplementCount ? repeat?.quality || quality : quality,
+      supplementFor: supplementCount ? repeat?.id : undefined,
       prompt: runPrompt,
       modelId: runModel,
       modelName: runModelName,
@@ -1364,72 +1432,93 @@ export default function Home() {
         setAttachments([]);
       }
     }
-    if (processingRef.current) {
-      const prestartedJob = { ...job, serverStartedAt: Date.now() };
-      queueRef.current = [...queueRef.current, prestartedJob];
-      setQueued(queueRef.current);
-      persistWork(pending, queueRef.current);
-      void createServerJob(prestartedJob, new AbortController().signal).catch(
-        () => {
-          // Its runner will query the same task ID. Never recreate a paid job.
-        },
-      );
-      return;
-    }
     await runJob(job);
   }
   async function runJob(job: GenerationJob, resume = false) {
+    const { queueId } = job;
+    if (checkingJobsRef.current.has(queueId)) return;
+    checkingJobsRef.current.add(queueId);
     const submittedAt = job.submittedAt || Date.now();
-    let activeJob = job;
-    explicitCancelRef.current = false;
-    processingRef.current = true;
-    setBusy(true);
-    setProgress(6);
-    setPendingHidden(false);
-    setPartialImages([]);
-    setPending(job);
-    persistWork(job, queueRef.current);
-    const controller = new AbortController();
-    abortRef.current = controller;
+    let activeJob = {
+      ...job,
+      submittedAt,
+      serverStartedAt: job.serverStartedAt || Date.now(),
+    };
+    const saveActiveJob = () => {
+      activeJobsRef.current.set(queueId, activeJob);
+      persistWork([...activeJobsRef.current.values()]);
+    };
+    saveActiveJob();
+    setActiveGenerations((current) => {
+      if (current.some((active) => active.job.queueId === queueId)) {
+        return current.map((active) => active.job.queueId === queueId
+          ? { ...active, issue: undefined }
+          : active);
+      }
+      return [...current, { job: activeJob, images: activeJob.receivedImages || [], hidden: false }];
+    });
+    const updateGeneration = (update: (active: ActiveGeneration) => ActiveGeneration) =>
+      setActiveGenerations((current) => current.map((active) =>
+        active.job.queueId === queueId ? update(active) : active,
+      ));
+    const onProgress = (images: string[]) => {
+      const received = activeJob.receivedImages || [];
+      if (images.length < received.length || (received.length === images.length &&
+          received.every((image, index) => image === images[index]))) return;
+      activeJob = { ...activeJob, receivedImages: images };
+      saveActiveJob();
+      updateGeneration((active) => ({ ...active, images }));
+    };
+    let keepForRecovery = true;
+    const pause = (issue: string) => updateGeneration((active) => ({ ...active, issue }));
+    let diagnostics: string[] | undefined;
     try {
       if (!resume && job.referencesOmitted)
-        throw new Error(
+        throw new JobSubmissionRejected(
           "排队任务的参考图未保存在浏览器中，请重新上传参考图后再生成。",
         );
-      if (!resume && !job.serverStartedAt) {
-        await createServerJob(job, controller.signal);
-        activeJob = { ...job, serverStartedAt: Date.now() };
-        setPending(activeJob);
-        persistWork(activeJob, queueRef.current);
+      if (!resume) {
+        try {
+          await createServerJob(job);
+          activeJob = { ...activeJob, serverStartedAt: Date.now() };
+          saveActiveJob();
+        } catch (error) {
+          if (error instanceof JobSubmissionRejected) throw error;
+          // A lost POST response still may mean generation was accepted.
+        }
       }
-      const showPartialImages = (images: string[]) =>
-        setPartialImages((current) =>
-          current.length === images.length &&
-          current.every((image, index) => image === images[index])
-            ? current
-            : images,
-        );
-      const data = await waitForServerJob(
-        activeJob.queueId,
-        controller.signal,
-        showPartialImages,
-        Boolean(activeJob.serverStartedAt),
-      );
-      if (resume && data.missing)
-        throw new Error(
-          "任务状态已丢失，未自动重新生成以避免重复扣费。",
-        );
-      if (data.error) throw new Error(data.error);
-      const completedCount = data.images?.length || 0;
-      const timing = generationTiming(
-        submittedAt,
-        activeJob.serverStartedAt,
-        Date.now(),
-      );
+      let data = await waitForServerJob(queueId, onProgress);
+      if (pageUnloadingRef.current) return;
+      if ((resume || data.interruptedByRestart) && data.status === "interrupted" && data.recoverable) {
+        const source = job.apiSource || sourceForModel(job.modelId);
+        const key = localStorage.getItem(apiProvider(source).keyStorageKey)?.trim() || job.apiKey.trim();
+        if (!key) {
+          pause("请在设置中填写该渠道的 API Key，再继续查询原任务。");
+          return;
+        }
+        await resumeServerJob(queueId, key);
+        data = await waitForServerJob(queueId, onProgress);
+        if (pageUnloadingRef.current) return;
+      }
+      if ((data.status === "interrupted" && data.recoverable) ||
+          data.status === "unavailable" || data.status === "missing") {
+        const label = data.status === "unavailable" ? "暂时无法查询"
+          : "结果待确认";
+        pause(data.error ? `${label} · ${data.error}` : label);
+        return;
+      }
+      const images = activeJob.receivedImages || [];
+      const completedCount = images.length;
+      diagnostics = data.diagnostics;
+      if (data.status === "failed" && completedCount === 0)
+        throw new JobSubmissionRejected(data.error || "生成失败");
+      const unconfirmed = data.status === "interrupted";
+      const requestedCount = job.count || 1;
+      const timing = generationTiming(submittedAt, activeJob.serverStartedAt, Date.now());
       const turn: Turn = {
-        id: crypto.randomUUID(),
+        id: queueId,
         prompt: job.prompt || "",
-        images: data.images || [],
+        images,
         createdAt: submittedAt,
         generationDurationMs: timing.generationDurationMs,
         queueWaitMs: timing.queueWaitMs,
@@ -1440,6 +1529,15 @@ export default function Home() {
         size: job.size,
         resolution: job.resolution,
         count: completedCount,
+        requestedCount,
+        diagnostics,
+        quality: job.quality,
+        status: unconfirmed ? "unconfirmed" : undefined,
+        error: unconfirmed
+          ? "剩余图片未取得上游任务编号，结果待确认。"
+          : completedCount < requestedCount
+          ? partialGenerationMessage(job.apiSource || sourceForModel(job.modelId), requestedCount, completedCount, data.error)
+          : undefined,
         attachments: data.references || persistentTextEditReferences(job.attachments || []),
         mode: job.mode,
         textEdit: job.textEdit ? {
@@ -1451,27 +1549,35 @@ export default function Home() {
           sourceImage: data.references?.[0] || job.productBlend.sourceImage,
         } : undefined,
       };
-      setTurns((current) => persistHistory([...current, turn]));
-      if (completedCount < (job.count || 1))
-        setError(
-          partialGenerationMessage(
-            job.apiSource || sourceForModel(job.modelId),
-            job.count || 1,
-            completedCount,
-          ),
-        );
+      const original = turnsRef.current.find((item) => item.id === job.supplementFor);
+      if (original && !original.supplementedJobs?.includes(queueId)) {
+        const target = original.images.length + missingImageCount(original);
+        const merged = [...new Set([...original.images, ...images])];
+        saveTurns(mergeHistory(turnsRef.current, [{
+          ...original,
+          images: merged,
+          count: merged.length,
+          requestedCount: target,
+          supplementedJobs: [...(original.supplementedJobs || []), queueId],
+          diagnostics: [...new Set([...(original.diagnostics || []), ...(diagnostics || [])])].slice(-12),
+          status: unconfirmed ? "unconfirmed" : original.status,
+          error: unconfirmed ? turn.error : merged.length < target
+            ? partialGenerationMessage(job.apiSource || sourceForModel(job.modelId), target, merged.length, data.error)
+            : undefined,
+        }]));
+      } else if (!original) {
+        saveTurns(mergeHistory(turnsRef.current, [turn]));
+      }
+      keepForRecovery = false;
     } catch (e) {
-      const aborted = e instanceof DOMException && e.name === "AbortError";
-      const termination = decideJobTermination({
-        pageUnloading: pageUnloadingRef.current,
-        aborted,
-        explicitCancel: explicitCancelRef.current,
-      });
-      if (termination.preserveWork) return;
-      const message = e instanceof Error ? e.message : "生成失败";
-      if (!termination.recordCancelled) setError(message);
+      if (pageUnloadingRef.current) return;
+      const message = e instanceof Error ? e.message : "无法读取任务状态。";
+      if (!(e instanceof JobSubmissionRejected)) {
+        pause(`暂时无法查询 · ${message}`);
+        return;
+      }
       const failedTurn: Turn = {
-        id: crypto.randomUUID(),
+        id: queueId,
         prompt: job.prompt || "",
         images: [],
         createdAt: submittedAt,
@@ -1487,35 +1593,19 @@ export default function Home() {
         mode: job.mode,
         textEdit: job.textEdit,
         productBlend: job.productBlend,
-        status: termination.recordCancelled ? "cancelled" : "failed",
-        error: termination.recordCancelled ? undefined : message,
+        status: "failed",
+        diagnostics,
+        error: message,
       };
-      setTurns((current) => persistHistory([...current, failedTurn]));
+      saveTurns(mergeHistory(turnsRef.current, [failedTurn]));
+      keepForRecovery = false;
     } finally {
-      if (pageUnloadingRef.current) {
-        persistWork(job, queueRef.current);
-        return;
+      checkingJobsRef.current.delete(queueId);
+      if (!keepForRecovery && !pageUnloadingRef.current) {
+        activeJobsRef.current.delete(queueId);
+        persistWork([...activeJobsRef.current.values()]);
+        setActiveGenerations((current) => current.filter(({ job }) => job.queueId !== queueId));
       }
-      setBusy(false);
-      setProgress(0);
-      setPendingHidden(false);
-      setPartialImages([]);
-      setPending(null);
-      setPreview((current) =>
-        current?.turnId === pendingPreviewId ? null : current,
-      );
-      abortRef.current = null;
-      processingRef.current = false;
-      const next = queueRef.current[0];
-      if (next) {
-        queueRef.current = queueRef.current.slice(1);
-        setQueued(queueRef.current);
-        persistWork(next, queueRef.current);
-        window.setTimeout(
-          () => void runJob(next, Boolean(next.serverStartedAt)),
-          0,
-        );
-      } else clearSavedWork();
     }
   }
   const composer = (
@@ -1682,7 +1772,7 @@ export default function Home() {
           image={productBlendImage}
           box={productBlendBox}
           additionalPrompt={productBlendPrompt}
-          busy={busy}
+          busy={activeGenerations.some(({ issue }) => !issue)}
           onBoxChange={setProductBlendBox}
           onAdditionalPromptChange={setProductBlendPrompt}
           onBack={resetProductBlendDraft}
@@ -1813,7 +1903,7 @@ export default function Home() {
             className={panel === "format" ? "tool selected" : "tool"}
             onClick={() => setPanel(panel === "format" ? null : "format")}
           >
-            {ratioName} <span>|</span> {resolution} <span>|</span> {supportsMultipleImages(studioMode) ? count : 1}
+            {ratioName} <span>|</span> {selectedResolution} <span>|</span> {supportsMultipleImages(studioMode) ? count : 1}
           </button>
           {panel === "format" && (
             <div className="popover format-popover">
@@ -1834,21 +1924,28 @@ export default function Home() {
                 ))}
               </div>
               <p>选择分辨率</p>
-              <div className="segments">
-                {(studioMode === "image-upscale" ? ["2K", "4K"] : ["1K", "2K", "4K"]).map((value) => (
+              <div className="segments resolution-segments">
+                {availableResolutions(apiSource, studioMode === "image-upscale").map((value) => (
                   <button
                     key={value}
-                    disabled={value === "4K" && isBflModel(model)}
+                    disabled={modelResolution ? value !== modelResolution : value === "4K" && isBflModel(model)}
                     title={
-                      value === "4K" && isBflModel(model)
+                      modelResolution && value !== modelResolution
+                        ? `当前模型使用 ${modelResolution}`
+                        : value === "4K" && isBflModel(model)
                         ? "BFL 官方 API 最高约 4MP，画室使用 2K 档"
                         : undefined
                     }
-                    className={resolution === value ? "chosen" : ""}
+                    className={selectedResolution === value ? "chosen" : ""}
                     onClick={() => setResolution(value)}
                   >
-                    {value === "1K" ? "标清" : value === "2K" ? "高清" : "超清"}{" "}
-                    {value}
+                    {value === "自适应"
+                      ? "自适应"
+                      : value === "1K"
+                        ? "标清 1K"
+                        : value === "2K"
+                          ? "高清 2K"
+                          : "超清 4K"}
                   </button>
                 ))}
               </div>
@@ -1946,13 +2043,32 @@ export default function Home() {
           )}
         </div>
         <span className="tool-spacer" />
-        {queued.length > 0 && (
-          <span className="queue-count">后台 {queued.length}</span>
+        {estimatedUnitPrice !== undefined && (
+          <span className="generation-estimate" title="按渠道公布的固定单价估算，以实际扣费为准">
+            ¥{formatEstimate(estimatedUnitPrice)}/张 × {estimatedCount} · {estimateModel?.estimatedPricingGroup ? "默认组" : ""}预计 ¥{formatEstimate(estimatedUnitPrice * estimatedCount)}
+          </span>
+        )}
+        {busy && (
+          <button
+            type="button"
+            className="queue-count"
+            aria-label="展开任务进度"
+            onClick={() => {
+              setActiveGenerations((current) => current.map((active) =>
+                active.hidden ? { ...active, hidden: false } : active,
+              ));
+              window.requestAnimationFrame(() => {
+                document.querySelector(".pending-entry")?.scrollIntoView({ block: "nearest" });
+              });
+            }}
+          >
+            {activeGenerations.length} 个任务
+          </button>
         )}
         <button
           className="send"
           disabled={(studioMode === "text-edit" && (recognizingText || !textEditImage || !hasPendingReplacement(textRegions))) || (studioMode === "product-blend" && (!productBlendImage || !isValidProductBox(productBlendBox))) || (studioMode === "image-upscale" && !attachments[0])}
-          aria-label={busy ? "加入生成队列" : studioMode === "text-edit" ? "开始改字" : studioMode === "product-blend" ? "开始溶图" : studioMode === "image-upscale" ? "开始放大" : "开始生成"}
+          aria-label={studioMode === "text-edit" ? "开始改字" : studioMode === "product-blend" ? "开始溶图" : studioMode === "image-upscale" ? "开始放大" : "开始生成"}
           onClick={() => void send()}
         >
           <span aria-hidden>↑</span>
@@ -1988,11 +2104,22 @@ export default function Home() {
         </div>
         <div className="recent-heading">
           <p className="recent-label">最近</p>
-          {latestTurns.length > 0 && (
+          {turns.some((turn) => !turn.favorite) && (
             <button onClick={() => setClearConfirm(true)}>清空</button>
           )}
         </div>
-        <nav>
+        <div className="history-filter">
+          <input
+            type="search"
+            aria-label="搜索历史"
+            placeholder="搜索提示词或模型"
+            value={historyQuery}
+            onChange={(event) => setHistoryQuery(event.target.value)}
+          />
+          <button type="button" aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly(!favoritesOnly)}>收藏</button>
+        </div>
+        <nav aria-label="最近记录" onScroll={() => setRecentMenu(null)}>
+          {turns.length > 0 && !latestTurns.length && <p className="recent-empty">没有匹配的记录</p>}
           {latestTurns.map((turn) => (
             <div className="recent-item" key={turn.id}>
               <button
@@ -2010,19 +2137,28 @@ export default function Home() {
                   <i>✦</i>
                 )}
                 <span>{turn.prompt}</span>
+                {turn.favorite && <small className="recent-star" aria-label="已收藏">★</small>}
               </button>
               <div className="recent-menu-anchor" data-recent-menu>
                 <button
                   className="recent-more"
                   aria-label="记录操作"
-                  onClick={() =>
-                    setRecentMenu(recentMenu === turn.id ? null : turn.id)
-                  }
+                  onClick={(event) => {
+                    const anchor = event.currentTarget.getBoundingClientRect();
+                    setRecentMenu(recentMenu?.id === turn.id ? null : {
+                      id: turn.id,
+                      top: Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - 110)),
+                      right: window.innerWidth - anchor.right,
+                    });
+                  }}
                 >
                   •••
                 </button>
-                {recentMenu === turn.id && (
-                  <div className="recent-menu">
+                {recentMenu?.id === turn.id && (
+                  <div className="recent-menu" style={{ top: recentMenu.top, right: recentMenu.right }}>
+                    <button onClick={() => { toggleFavorite(turn.id); setRecentMenu(null); }}>
+                      {turn.favorite ? "取消收藏" : "收藏该批次"}
+                    </button>
                     <button onClick={() => deleteTurn(turn.id)}>
                       删除该批次结果
                     </button>
@@ -2156,10 +2292,67 @@ export default function Home() {
         </button>
       )}
       <section className="stage">
-        {turns.length || busy || queued.length ? (
+        {turns.length || busy ? (
           <div className="conversation">
-            {turns.map((turn) => (
-              <article
+            {conversationEntries.map((entry) => {
+              if ("active" in entry) {
+                const { job, images, issue } = entry.active;
+                const count = job.count || 1;
+                return (
+                  <article className="generation-entry pending-entry" key={job.queueId}>
+                    <GenerationHeader
+                      turn={job}
+                      onReferenceClick={(references) =>
+                        setReferencePreview({ references, index: 0 })
+                      }
+                    />
+                    <div className="pending-grid">
+                      {Array.from({ length: count }, (_, index) => {
+                        const image = images[index];
+                        return image ? (
+                          <GeneratedResult
+                            key={image}
+                            src={image}
+                            alt={`已完成结果 ${index + 1}`}
+                            downloadName={`cherryin-${job.submittedAt || 0}-${index + 1}.png`}
+                            statusLabel={`${index + 1} / ${count} 已完成`}
+                            onOpen={() => setPreview({ turnId: job.queueId, index })}
+                            onUseReference={() => useResultAsReference(image, index)}
+                          />
+                        ) : (
+                          <div key={index}>
+                            <b>{images.length} / {count} · {issue ? "待查询" : "生成中"}</b>
+                            <i />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {issue && <div role="status" className="failed-state"><span>{issue}</span></div>}
+                    <div className="result-actions">
+                      {issue && (
+                        <button onClick={() => void copyDiagnostics({ ...job, jobId: job.queueId, createdAt: job.submittedAt, error: issue })}>
+                          {diagnosticCopied === job.queueId ? "已复制" : "复制诊断信息"}
+                        </button>
+                      )}
+                      {issue && (
+                        <button onClick={() => {
+                          const saved = activeJobsRef.current.get(job.queueId);
+                          if (saved) void runJob(saved, true);
+                        }}>继续查询</button>
+                      )}
+                      <button onClick={() => setActiveGenerations((current) =>
+                        current.map((active) => active.job.queueId === job.queueId
+                          ? { ...active, hidden: true }
+                          : active),
+                      )}>
+                        隐藏进度（后台继续）
+                      </button>
+                    </div>
+                  </article>
+                );
+              }
+              const { turn } = entry;
+              return <article
                 className="generation-entry"
                 id={`turn-${turn.id}`}
                 key={turn.id}
@@ -2170,7 +2363,7 @@ export default function Home() {
                     setReferencePreview({ references, index: 0 })
                   }
                 />
-                {turn.status === "failed" || turn.status === "cancelled" ? (
+                {turn.status === "failed" || turn.status === "cancelled" || (turn.status === "unconfirmed" && !turn.images.length) ? (
                   <div
                     className={
                       turn.status === "cancelled"
@@ -2179,7 +2372,7 @@ export default function Home() {
                     }
                   >
                     <strong>
-                      {turn.status === "cancelled" ? "已取消" : "生成失败"}
+                      {turn.status === "cancelled" ? "已取消" : turn.status === "unconfirmed" ? "结果待确认" : "生成失败"}
                     </strong>
                     {turn.error && <span>{turn.error}</span>}
                   </div>
@@ -2192,8 +2385,14 @@ export default function Home() {
                         alt={`生成结果 ${index + 1}`}
                         downloadName={`cherryin-${turn.createdAt}-${index + 1}.png`}
                         onOpen={() => setPreview({ turnId: turn.id, index })}
+                        onUseReference={() => useResultAsReference(image, index)}
                       />
                     ))}
+                  </div>
+                )}
+                {turn.images.length > 0 && turn.error && (
+                  <div className="failed-state">
+                    <span>{turn.error}</span>
                   </div>
                 )}
                 <div className="result-actions">
@@ -2248,7 +2447,23 @@ export default function Home() {
                   >
                     {turn.mode === "text-edit" ? "继续改字" : turn.mode === "product-blend" ? "继续溶图" : turn.mode === "image-upscale" ? "继续放大" : "重新编辑"}
                   </button>
+                  <button aria-pressed={Boolean(turn.favorite)} onClick={() => toggleFavorite(turn.id)}>
+                    {turn.favorite ? "已收藏" : "收藏"}
+                  </button>
                   <button onClick={() => void send(turn)}>再次生成</button>
+                  {missingImageCount(turn) > 0 && (
+                    <button
+                      disabled={activeGenerations.some(({ job }) => job.supplementFor === turn.id)}
+                      onClick={() => void supplementImages(turn)}
+                    >
+                      补生成 {missingImageCount(turn)} 张
+                    </button>
+                  )}
+                  {turn.error && (
+                    <button onClick={() => void copyDiagnostics({ ...turn, jobId: turn.id })}>
+                      {diagnosticCopied === turn.id ? "已复制" : "复制诊断信息"}
+                    </button>
+                  )}
                   {turn.images.length > 0 && (
                     <button
                       onClick={() => downloadImageBatch(turn.images, turn.createdAt)}
@@ -2273,69 +2488,8 @@ export default function Home() {
                     )}
                   </div>
                 </div>
-              </article>
-            ))}
-            {busy && pending && !pendingHidden && (
-              <article className="generation-entry pending-entry">
-                <GenerationHeader
-                  turn={pending}
-                  onReferenceClick={(references) =>
-                    setReferencePreview({ references, index: 0 })
-                  }
-                />
-                <div className="pending-grid">
-                  {Array.from({ length: pending.count || 1 }, (_, index) => {
-                    const image = partialImages[index];
-                    return image ? (
-                      <GeneratedResult
-                        key={image}
-                        src={image}
-                        alt={`已完成结果 ${index + 1}`}
-                        downloadName={`cherryin-${pending.submittedAt || 0}-${index + 1}.png`}
-                        statusLabel={`${index + 1} / ${pending.count || 1} 已完成`}
-                        onOpen={() =>
-                          setPreview({ turnId: pendingPreviewId, index })
-                        }
-                      />
-                    ) : (
-                      <div key={index}>
-                        <b>
-                          {partialImages.length} / {pending.count || 1}
-                          {index === partialImages.length
-                            ? ` · ${progress}%`
-                            : ""}
-                        </b>
-                        <i />
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="result-actions">
-                  <button
-                    onClick={() => setPendingHidden(true)}
-                  >
-                    隐藏进度（后台继续）
-                  </button>
-                </div>
-              </article>
-            )}
-            {queued.map((job) => (
-              <article
-                className="generation-entry queued-entry"
-                key={job.queueId}
-              >
-                <GenerationHeader
-                  turn={job}
-                  onReferenceClick={(references) =>
-                    setReferencePreview({ references, index: 0 })
-                  }
-                />
-                <div className="queued-status">
-                  <strong>后台生成中</strong>
-                  <span>已提交，无需等待前一条完成</span>
-                </div>
-              </article>
-            ))}
+              </article>;
+            })}
             <div className="conversation-end" ref={conversationEnd} />
           </div>
         ) : (
@@ -2344,7 +2498,7 @@ export default function Home() {
             {composer}
           </div>
         )}
-        {(turns.length > 0 || busy || queued.length > 0) && (
+        {(turns.length > 0 || busy) && (
           <div className="bottom-composer">{composer}</div>
         )}
       </section>
@@ -2367,6 +2521,10 @@ export default function Home() {
             >
               下载
             </a>
+            <button className="lightbox-reference" onClick={(event) => {
+              event.stopPropagation();
+              useResultAsReference(previewTurn.images[preview.index], preview.index);
+            }}>用作参考</button>
             <button aria-label="关闭预览" onClick={() => setPreview(null)}>
               ×
             </button>
@@ -2485,8 +2643,8 @@ export default function Home() {
             className="confirm-dialog"
             onClick={(event) => event.stopPropagation()}
           >
-            <strong>清空全部记录？</strong>
-            <p>所有生成记录将从“最近”和当前页面中移除，此操作无法撤销。</p>
+            <strong>清空未收藏的记录？</strong>
+            <p>收藏的批次会保留。清空的记录无法撤销。</p>
             <div>
               <button onClick={() => setClearConfirm(false)}>取消</button>
               <button className="danger" onClick={clearHistory}>
@@ -2652,8 +2810,21 @@ function readFile(file: File) {
   });
 }
 
+function formatEstimate(price: number) {
+  return Number(price.toFixed(5)).toString();
+}
+
+function mergeHistory(...groups: Turn[][]) {
+  const combined = new Map<string, Turn>();
+  for (const turn of groups.flat()) {
+    const existing = combined.get(turn.id);
+    if (!existing || existing.images.length <= turn.images.length) combined.set(turn.id, turn);
+  }
+  return [...combined.values()].sort((first, second) => first.createdAt - second.createdAt);
+}
+
 function persistHistory(items: Turn[]) {
-  const visible = items.slice(-60);
+  const visible = retainStudioHistory(items);
   let storable = visible.map((turn) => ({
     ...turn,
     attachments: (turn.attachments || []).filter((item) =>
@@ -2666,10 +2837,10 @@ function persistHistory(items: Turn[]) {
       ? turn.productBlend
       : undefined,
   }));
+  void persistServerHistory(storable);
   while (storable.length) {
     try {
       localStorage.setItem("dialogue-studio-history", JSON.stringify(storable));
-      void persistServerHistory(storable);
       return visible;
     } catch {
       storable = storable.slice(1);
@@ -2678,21 +2849,24 @@ function persistHistory(items: Turn[]) {
   try {
     localStorage.removeItem("dialogue-studio-history");
   } catch {}
-  void persistServerHistory([]);
   return visible;
 }
 
-async function persistServerHistory(items: Turn[]) {
-  try {
-    await fetch("/api/history", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    });
-  } catch {}
+let historySave = Promise.resolve();
+
+function persistServerHistory(items: Turn[]) {
+  historySave = historySave.then(async () => {
+    try {
+      await fetch("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+    } catch {}
+  });
 }
 
-function persistWork(pending: GenerationJob | null, queued: GenerationJob[]) {
+function persistWork([pending, ...queued]: GenerationJob[]) {
   if (!pending && !queued.length) return clearSavedWork();
   try {
     localStorage.setItem(
@@ -2730,7 +2904,9 @@ function clearSavedWork() {
   } catch {}
 }
 
-async function createServerJob(job: GenerationJob, signal: AbortSignal) {
+class JobSubmissionRejected extends Error {}
+
+async function createServerJob(job: GenerationJob) {
   const response = await fetch("/api/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2741,66 +2917,54 @@ async function createServerJob(job: GenerationJob, signal: AbortSignal) {
       prompt: job.prompt,
       model: job.modelId,
       size: job.size,
+      adaptiveResolution:
+        job.apiSource === "apilio" && job.resolution === "自适应",
       quality: job.quality,
       count: job.count,
       references: job.attachments,
     }),
-    signal,
+    signal: AbortSignal.timeout(120_000),
   });
-  const data = (await response.json()) as { error?: string };
-  if (!response.ok) throw new Error(data.error || "无法创建生成任务");
+  if (!response.ok) {
+    const data = await response.json().catch(() => null) as { error?: string } | null;
+    const message = data?.error || "无法创建生成任务。";
+    if (response.status === 400) throw new JobSubmissionRejected(message);
+    throw new Error(message);
+  }
+}
+
+async function resumeServerJob(queueId: string, apiKey: string) {
+  const response = await fetch(`/api/jobs/${encodeURIComponent(queueId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(data?.error || "无法继续查询原任务。");
+  }
 }
 
 async function waitForServerJob(
   queueId: string,
-  signal: AbortSignal,
   onProgress: (images: string[]) => void,
-  tolerateStartupRace = false,
-): Promise<{
-  missing: boolean;
-  images?: string[];
-  references?: Attachment[];
-  error?: string;
-  requestedCount?: number;
-  completedCount?: number;
-}> {
-  const sleep = () =>
-    new Promise<void>((resolve, reject) => {
-      const timer = window.setTimeout(resolve, 1200);
-      signal.addEventListener(
-        "abort",
-        () => {
-          window.clearTimeout(timer);
-          reject(new DOMException("Aborted", "AbortError"));
-        },
-        { once: true },
-      );
-    });
+) {
   const result = await waitForJobStatus({
     read: async (): Promise<JobStatusSnapshot> => {
       const response = await fetch(`/api/jobs/${encodeURIComponent(queueId)}`, {
         cache: "no-store",
-        signal,
+        signal: AbortSignal.timeout(8_000),
       });
-      const data = (await response.json()) as Omit<JobStatusSnapshot, "status"> & {
-        status?: "running" | "completed" | "failed";
-      };
       if (response.status === 404) return { status: "missing" };
-      if (!response.ok)
-        throw new Error(data.error || "无法读取任务状态");
-      return { ...data, status: data.status || "running" };
+      const data = (await response.json()) as JobStatusSnapshot;
+      if (!response.ok) throw new Error(data.error || "无法读取任务状态");
+      return data;
     },
-    sleep,
+    sleep: () => new Promise((resolve) => window.setTimeout(resolve, 1200)),
     onProgress,
-    tolerateMissingReads: tolerateStartupRace ? 3 : 0,
+    tolerateMissingReads: 3,
     transientRetryLimit: 8,
   });
-  if (result.status === "missing") return { missing: true, error: "" };
-  if (result.status === "failed")
-    throw new Error(result.error || "生成失败");
-  return {
-    ...result,
-    missing: false,
-    references: result.references as Attachment[] | undefined,
-  };
+  return { ...result, references: result.references as Attachment[] | undefined };
 }

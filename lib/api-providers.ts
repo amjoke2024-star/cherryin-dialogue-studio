@@ -5,6 +5,8 @@ export type StudioModel = {
   name: string;
   note: string;
   mark: string;
+  fixedUnitPrice?: number;
+  estimatedPricingGroup?: "default";
 };
 
 type ApiProvider = {

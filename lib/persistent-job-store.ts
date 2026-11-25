@@ -5,15 +5,19 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import type { UpstreamImageTask } from "./server-image-generation";
 
 export type PersistentJob = {
   id: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "interrupted";
+  upstream?: Record<string, UpstreamImageTask>;
+  interruptedByRestart?: boolean;
   createdAt: number;
   result?: {
     images?: string[];
     references?: Array<{ name: string; data: string }>;
     error?: string;
+    diagnostics?: string[];
     requestedCount?: number;
     completedCount?: number;
     failedCount?: number;

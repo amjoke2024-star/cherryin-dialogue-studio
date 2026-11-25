@@ -2,6 +2,10 @@
   grid-template-columns: repeat(2, 1fr);
 }
 
+.resolution-segments {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .sidebar {
   z-index: 40;
 }
@@ -703,9 +707,15 @@
   color: #d7dbe1;
 }
 .sidebar nav {
-  overflow: visible;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+.sidebar > :not(nav) {
+  flex-shrink: 0;
 }
 .recent-item {
+  flex: none;
   position: relative;
   display: flex;
   align-items: center;
@@ -745,10 +755,8 @@
 }
 .recent-menu {
   width: 190px;
-  position: absolute;
+  position: fixed;
   z-index: 50;
-  right: -4px;
-  top: 35px;
   border: 1px solid #30343d;
   border-radius: 12px;
   padding: 5px;
@@ -985,9 +993,17 @@
   border: 1px solid #343943;
   border-radius: 999px;
   padding: 5px 9px;
-  color: #9299a4;
+  background: transparent;
+  color: #a5aebc;
   font-size: 12px;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.queue-count:hover,
+.queue-count:focus-visible {
+  border-color: #717b8a;
+  color: #f1f3f6;
 }
 
 .queue-count + .send {
@@ -1446,4 +1462,75 @@
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.history-filter {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.history-filter input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #343943;
+  border-radius: 8px;
+  background: #1b1e23;
+  color: var(--ink);
+  padding: 7px 8px;
+  font-size: 12px;
+}
+
+.history-filter button {
+  flex: none;
+  border: 1px solid #343943;
+  border-radius: 8px;
+  background: #1b1e23;
+  color: #c9ced6;
+  font-size: 12px;
+}
+
+.history-filter button[aria-pressed="true"],
+.recent-star {
+  color: #e7bd67;
+}
+
+.recent-empty {
+  margin: 8px;
+  color: #9299a4;
+  font-size: 12px;
+}
+
+.generation-estimate {
+  color: #c4cbd5;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.result-image-frame .result-use-reference {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #eef0f3;
+  background: #111318d9;
+  font-size: 12px;
+}
+
+@media (hover: hover) {
+  .result-image-frame .result-use-reference {
+    opacity: 0;
+  }
+
+  .result-image-frame:hover .result-use-reference,
+  .result-image-frame .result-use-reference:focus-visible {
+    opacity: 1;
+  }
+}
+
+.lightbox-bar .lightbox-reference {
+  width: auto;
+  padding-inline: 12px;
 }
